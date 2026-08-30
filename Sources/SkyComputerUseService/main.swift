@@ -42,10 +42,22 @@ do {
     exit(1)
 }
 
-let protocolProbe = AppshotProtocolProbe(
-    screenshotURL: screenshotURL,
-    accessibilityText: "Intel Appshot compatibility probe: Apple Event bridge is active."
-)
+let accessibilityProvider = MusicAccessibilitySnapshotProvider()
+let protocolProbe = AppshotProtocolProbe { requestedBundleIdentifier in
+    let snapshot = try accessibilityProvider.capture(
+        requestedBundleIdentifier: requestedBundleIdentifier
+    )
+    probeLog(
+        "captured Music AX pid=\(snapshot.processIdentifier) "
+            + "window=\(snapshot.windowTitle) nodes=\(snapshot.nodeCount) "
+            + "truncated=\(snapshot.wasTruncated) "
+            + "durationMs=\(snapshot.durationMilliseconds)"
+    )
+    return AppshotCapturePayload(
+        screenshotURL: screenshotURL,
+        accessibilityText: snapshot.accessibilityText
+    )
+}
 let appleEventBridge = AppshotAppleEventBridge(protocolProbe: protocolProbe)
 let loggingBridge = LoggingAppleEventBridge(bridge: appleEventBridge)
 

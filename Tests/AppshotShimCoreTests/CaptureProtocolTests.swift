@@ -18,6 +18,46 @@ func startCaptureRegistersRequest() throws {
     #expect(probe.hasCapture(requestID: "request-1"))
 }
 
+@Test("start capture resolves its payload for the requested application")
+func startCaptureResolvesPayloadForRequestedApplication() throws {
+    var capturedBundleIdentifiers: [String] = []
+    let probe = AppshotProtocolProbe { bundleIdentifier in
+        capturedBundleIdentifiers.append(bundleIdentifier)
+        return AppshotCapturePayload(
+            screenshotURL: URL(
+                fileURLWithPath: "/tmp/com.openai.sky.CUAService/music-probe.png"
+            ),
+            accessibilityText: "Live Music accessibility content"
+        )
+    }
+
+    _ = try probe.handle(
+        requestType: "ComputerUseIPCAppStartCaptureRequest",
+        requestJSON: #"{"requestId":"request-music","app":"com.apple.Music","version":2}"#.data(using: .utf8)!
+    )
+
+    let nextRequest = #"{"requestId":"request-music"}"#.data(using: .utf8)!
+    let replies = try (0..<4).map { _ in
+        try #require(
+            JSONSerialization.jsonObject(
+                with: probe.handle(
+                    requestType: "ComputerUseIPCAppNextCaptureUpdateRequest",
+                    requestJSON: nextRequest
+                )
+            ) as? [String: Any]
+        )
+    }
+
+    #expect(capturedBundleIdentifiers == ["com.apple.Music"])
+    #expect(replies[1]["type"] as? String == "axText")
+    #expect(replies[1]["text"] as? String == "Live Music accessibility content")
+    #expect(replies[2]["type"] as? String == "screenshot")
+    #expect(
+        replies[2]["screenshotURL"] as? String
+            == "file:///tmp/com.openai.sky.CUAService/music-probe.png"
+    )
+}
+
 @Test("next capture update emits the Appshots sequence in protocol order")
 func nextCaptureUpdateSequence() throws {
     let probe = AppshotProtocolProbe(

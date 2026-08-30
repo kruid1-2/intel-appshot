@@ -5,15 +5,34 @@ public enum AppshotProtocolProbeError: Error {
     case unsupportedRequestType(String)
 }
 
-public final class AppshotProtocolProbe {
-    private let screenshotURL: URL
-    private let accessibilityText: String
-    private var captureRequestIDs: Set<String> = []
-    private var pendingUpdates: [String: [Data]] = [:]
+public struct AppshotCapturePayload {
+    public let screenshotURL: URL
+    public let accessibilityText: String
 
     public init(screenshotURL: URL, accessibilityText: String) {
         self.screenshotURL = screenshotURL
         self.accessibilityText = accessibilityText
+    }
+}
+
+public final class AppshotProtocolProbe {
+    public typealias CaptureProvider = (String) throws -> AppshotCapturePayload
+
+    private let captureProvider: CaptureProvider
+    private var captureRequestIDs: Set<String> = []
+    private var pendingUpdates: [String: [Data]] = [:]
+
+    public init(screenshotURL: URL, accessibilityText: String) {
+        self.captureProvider = { _ in
+            AppshotCapturePayload(
+                screenshotURL: screenshotURL,
+                accessibilityText: accessibilityText
+            )
+        }
+    }
+
+    public init(captureProvider: @escaping CaptureProvider) {
+        self.captureProvider = captureProvider
     }
 
     public func handle(requestType: String, requestJSON: Data) throws -> Data {
@@ -39,6 +58,7 @@ public final class AppshotProtocolProbe {
             throw AppshotProtocolProbeError.invalidRequest
         }
 
+        let payload = try captureProvider(bundleIdentifier)
         captureRequestIDs.insert(requestID)
         pendingUpdates[requestID] = [
             try responseData([
@@ -47,11 +67,11 @@ public final class AppshotProtocolProbe {
             ]),
             try responseData([
                 "type": "axText",
-                "text": accessibilityText
+                "text": payload.accessibilityText
             ]),
             try responseData([
                 "type": "screenshot",
-                "screenshotURL": screenshotURL.absoluteString
+                "screenshotURL": payload.screenshotURL.absoluteString
             ]),
             try responseData(["type": "completed"])
         ]

@@ -11,7 +11,7 @@ enum ProbeClientError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .invalidPID:
-            return "usage: AppshotProbeClient <service-pid>"
+            return "usage: AppshotProbeClient <service-pid> [bundle-identifier]"
         case .descriptorCreationFailed:
             return "could not create Apple Event descriptor"
         case let .serviceError(number, message):
@@ -67,7 +67,7 @@ func sendRequest(
 
     let reply = try event.sendEvent(
         options: [.waitForReply, .neverInteract],
-        timeout: 3
+        timeout: 15
     )
     if let errorDescriptor = reply.paramDescriptor(forKeyword: keyErrorNumber) {
         let message = reply.paramDescriptor(forKeyword: keyErrorString)?.stringValue
@@ -86,7 +86,7 @@ func sendRequest(
 
 do {
     guard
-        CommandLine.arguments.count == 2,
+        (2...3).contains(CommandLine.arguments.count),
         let parsedPID = Int32(CommandLine.arguments[1]),
         parsedPID > 0
     else {
@@ -94,12 +94,15 @@ do {
     }
 
     let requestID = "standalone-integration-probe"
+    let requestedBundleIdentifier = CommandLine.arguments.count == 3
+        ? CommandLine.arguments[2]
+        : "com.apple.TextEdit"
     let started = try sendRequest(
         pid: parsedPID,
         requestType: "ComputerUseIPCAppStartCaptureRequest",
         request: [
             "requestId": requestID,
-            "app": "com.apple.TextEdit",
+            "app": requestedBundleIdentifier,
             "permissionRequestId": "standalone-permission-probe",
             "version": 2
         ]
@@ -110,6 +113,7 @@ do {
 
     var updateTypes: [String] = []
     var screenshotPath: String?
+    var accessibilityText: String?
     for _ in 0..<4 {
         let update = try sendRequest(
             pid: parsedPID,
@@ -120,6 +124,9 @@ do {
             throw ProbeClientError.unexpectedResponse("capture update had no type")
         }
         updateTypes.append(type)
+        if type == "axText", let value = update["text"] as? String {
+            accessibilityText = value
+        }
         if type == "screenshot", let value = update["screenshotURL"] as? String {
             screenshotPath = URL(string: value)?.path
         }
@@ -141,7 +148,9 @@ do {
         "pid": parsedPID,
         "result": "passed",
         "screenshotPath": screenshotPath,
-        "updateTypes": updateTypes
+        "updateTypes": updateTypes,
+        "axTextCharacterCount": accessibilityText?.count ?? 0,
+        "axTextPreview": accessibilityText.map { String($0.prefix(2_000)) } ?? ""
     ]
     let output = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
     print(String(decoding: output, as: UTF8.self))
