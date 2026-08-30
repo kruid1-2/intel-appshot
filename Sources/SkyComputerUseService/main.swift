@@ -33,16 +33,10 @@ app.setActivationPolicy(.prohibited)
 
 let captureDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent("com.openai.sky.CUAService", isDirectory: true)
-let screenshotURL = captureDirectory.appendingPathComponent("intel-appshot-probe.png")
-
-do {
-    try ProbeScreenshotWriter.write(to: screenshotURL)
-} catch {
-    probeLog("failed to create probe image: \(error)")
-    exit(1)
-}
+let screenshotURL = captureDirectory.appendingPathComponent("music-window.png")
 
 let accessibilityProvider = MusicAccessibilitySnapshotProvider()
+let screenshotProvider = MusicWindowScreenshotProvider()
 let protocolProbe = AppshotProtocolProbe { requestedBundleIdentifier in
     let snapshot = try accessibilityProvider.capture(
         requestedBundleIdentifier: requestedBundleIdentifier
@@ -53,8 +47,21 @@ let protocolProbe = AppshotProtocolProbe { requestedBundleIdentifier in
             + "truncated=\(snapshot.wasTruncated) "
             + "durationMs=\(snapshot.durationMilliseconds)"
     )
+    let screenshot = try screenshotProvider.capture(
+        accessibilityWindow: snapshot.windowElement,
+        processIdentifier: snapshot.processIdentifier,
+        destination: screenshotURL
+    )
+    probeLog(
+        "captured Music window screenshot pid=\(snapshot.processIdentifier) "
+            + "windowID=\(screenshot.windowID) mapping=\(screenshot.mappingMethod) "
+            + "mappingMs=\(screenshot.mappingDurationMilliseconds) "
+            + "shareableContentMs=\(screenshot.shareableContentDurationMilliseconds) "
+            + "imageMs=\(screenshot.imageCaptureDurationMilliseconds) "
+            + "totalMs=\(screenshot.totalDurationMilliseconds)"
+    )
     return AppshotCapturePayload(
-        screenshotURL: screenshotURL,
+        screenshotURL: screenshot.screenshotURL,
         accessibilityText: snapshot.accessibilityText
     )
 }

@@ -11,6 +11,7 @@ public struct MusicAccessibilitySnapshot {
     public let nodeCount: Int
     public let wasTruncated: Bool
     public let durationMilliseconds: Int
+    public let windowElement: AXUIElement
 }
 
 public enum MusicAccessibilitySnapshotError: Error, CustomStringConvertible {
@@ -123,7 +124,8 @@ public final class MusicAccessibilitySnapshotProvider {
             accessibilityText: (header + [result.text]).joined(separator: "\n"),
             nodeCount: result.nodeCount,
             wasTruncated: result.wasTruncated,
-            durationMilliseconds: durationMilliseconds
+            durationMilliseconds: durationMilliseconds,
+            windowElement: window
         )
     }
 
