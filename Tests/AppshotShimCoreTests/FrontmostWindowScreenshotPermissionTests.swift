@@ -3,9 +3,9 @@ import Foundation
 import Testing
 @testable import AppshotShimCore
 
-@Test("Music window screenshot reports Screen Recording denial before capture")
-func musicWindowScreenshotReportsScreenRecordingDenial() {
-    let provider = MusicWindowScreenshotProvider(screenCaptureAccess: { false })
+@Test("frontmost window screenshot reports Screen Recording denial before capture")
+func frontmostWindowScreenshotReportsScreenRecordingDenial() {
+    let provider = FrontmostWindowScreenshotProvider(screenCaptureAccess: { false })
     let window = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
 
     do {

@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-public struct MusicAccessibilitySnapshot {
+public struct FrontmostAccessibilitySnapshot {
     public let applicationName: String
     public let bundleIdentifier: String
     public let processIdentifier: pid_t
@@ -14,10 +14,9 @@ public struct MusicAccessibilitySnapshot {
     public let windowElement: AXUIElement
 }
 
-public enum MusicAccessibilitySnapshotError: Error, CustomStringConvertible {
+public enum FrontmostAccessibilitySnapshotError: Error, CustomStringConvertible {
     case accessibilityPermissionDenied
     case frontmostApplicationUnavailable
-    case requestedApplicationUnsupported(String)
     case frontmostApplicationMismatch(expected: String, actual: String?)
     case focusedAndMainWindowUnavailable(focusedError: AXError, mainError: AXError)
 
@@ -27,19 +26,30 @@ public enum MusicAccessibilitySnapshotError: Error, CustomStringConvertible {
             return "Accessibility permission is not granted to Codex Computer Use"
         case .frontmostApplicationUnavailable:
             return "macOS did not report a frontmost application"
-        case let .requestedApplicationUnsupported(bundleIdentifier):
-            return "requested application is not Music: \(bundleIdentifier)"
         case let .frontmostApplicationMismatch(expected, actual):
             let actualBundleIdentifier = actual ?? "unknown"
             return "frontmost application mismatch: expected \(expected), got \(actualBundleIdentifier)"
         case let .focusedAndMainWindowUnavailable(focusedError, mainError):
-            return "Music has no focused or main AX window (focused=\(focusedError.rawValue), main=\(mainError.rawValue))"
+            return "frontmost application has no focused or main AX window (focused=\(focusedError.rawValue), main=\(mainError.rawValue))"
         }
     }
 }
 
-public final class MusicAccessibilitySnapshotProvider {
-    public static let musicBundleIdentifier = "com.apple.Music"
+enum FrontmostApplicationBundleMatcher {
+    static func validate(
+        requestedBundleIdentifier: String,
+        frontmostBundleIdentifier: String?
+    ) throws {
+        guard frontmostBundleIdentifier == requestedBundleIdentifier else {
+            throw FrontmostAccessibilitySnapshotError.frontmostApplicationMismatch(
+                expected: requestedBundleIdentifier,
+                actual: frontmostBundleIdentifier
+            )
+        }
+    }
+}
+
+public final class FrontmostAccessibilitySnapshotProvider {
 
     private let maximumDepth: Int
     private let maximumNodeCount: Int
@@ -49,26 +59,21 @@ public final class MusicAccessibilitySnapshotProvider {
         self.maximumNodeCount = maximumNodeCount
     }
 
-    public func capture(requestedBundleIdentifier: String) throws -> MusicAccessibilitySnapshot {
+    public func capture(
+        requestedBundleIdentifier: String
+    ) throws -> FrontmostAccessibilitySnapshot {
         let startedAt = CFAbsoluteTimeGetCurrent()
 
-        guard requestedBundleIdentifier == Self.musicBundleIdentifier else {
-            throw MusicAccessibilitySnapshotError.requestedApplicationUnsupported(
-                requestedBundleIdentifier
-            )
-        }
         guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
-            throw MusicAccessibilitySnapshotError.frontmostApplicationUnavailable
+            throw FrontmostAccessibilitySnapshotError.frontmostApplicationUnavailable
         }
-        guard frontmostApplication.bundleIdentifier == requestedBundleIdentifier else {
-            throw MusicAccessibilitySnapshotError.frontmostApplicationMismatch(
-                expected: requestedBundleIdentifier,
-                actual: frontmostApplication.bundleIdentifier
-            )
-        }
+        try FrontmostApplicationBundleMatcher.validate(
+            requestedBundleIdentifier: requestedBundleIdentifier,
+            frontmostBundleIdentifier: frontmostApplication.bundleIdentifier
+        )
 
         guard AXIsProcessTrusted() else {
-            throw MusicAccessibilitySnapshotError.accessibilityPermissionDenied
+            throw FrontmostAccessibilitySnapshotError.accessibilityPermissionDenied
         }
 
         let processIdentifier = frontmostApplication.processIdentifier
@@ -85,7 +90,7 @@ public final class MusicAccessibilitySnapshotProvider {
             : (nil, AXError.success)
 
         guard let window = focusedWindow.element ?? mainWindow.0 else {
-            throw MusicAccessibilitySnapshotError.focusedAndMainWindowUnavailable(
+            throw FrontmostAccessibilitySnapshotError.focusedAndMainWindowUnavailable(
                 focusedError: focusedWindow.error,
                 mainError: mainWindow.1
             )
@@ -97,7 +102,7 @@ public final class MusicAccessibilitySnapshotProvider {
             snapshot: { [self] element in treeNode(for: element) }
         )
         let result = traversal.render(root: window)
-        let applicationName = frontmostApplication.localizedName ?? "Music"
+        let applicationName = frontmostApplication.localizedName ?? requestedBundleIdentifier
         let windowTitle = stringValue(
             of: window,
             attribute: kAXTitleAttribute as CFString
@@ -116,7 +121,7 @@ public final class MusicAccessibilitySnapshotProvider {
             "Accessibility Tree:"
         ]
 
-        return MusicAccessibilitySnapshot(
+        return FrontmostAccessibilitySnapshot(
             applicationName: applicationName,
             bundleIdentifier: requestedBundleIdentifier,
             processIdentifier: processIdentifier,

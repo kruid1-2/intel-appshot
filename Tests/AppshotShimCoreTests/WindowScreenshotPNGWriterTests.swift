@@ -22,7 +22,7 @@ func windowScreenshotWriterEncodesPNG() throws {
     let image = try #require(context.makeImage())
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    let destination = directory.appendingPathComponent("music-window.png")
+    let destination = directory.appendingPathComponent("frontmost-window.png")
     defer { try? FileManager.default.removeItem(at: directory) }
 
     try WindowScreenshotPNGWriter.write(image: image, to: destination)

@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-public struct MusicWindowScreenshot {
+public struct FrontmostWindowScreenshot {
     public let screenshotURL: URL
     public let windowID: CGWindowID
     public let mappingMethod: String
@@ -13,7 +13,7 @@ public struct MusicWindowScreenshot {
     public let totalDurationMilliseconds: Int
 }
 
-public enum MusicWindowScreenshotError: Error, CustomStringConvertible {
+public enum FrontmostWindowScreenshotError: Error, CustomStringConvertible {
     case screenRecordingPermissionDenied
     case screenCaptureKitRequiresMacOS14
     case shareableContentUnavailable(String)
@@ -56,7 +56,7 @@ private final class ScreenshotCallbackBox<Value>: @unchecked Sendable {
     }
 }
 
-public final class MusicWindowScreenshotProvider {
+public final class FrontmostWindowScreenshotProvider {
     private let windowIDResolver = AXWindowIDResolver()
     private let callbackTimeout: DispatchTimeInterval
     private let screenCaptureAccess: () -> Bool
@@ -73,12 +73,12 @@ public final class MusicWindowScreenshotProvider {
         accessibilityWindow: AXUIElement,
         processIdentifier: pid_t,
         destination: URL
-    ) throws -> MusicWindowScreenshot {
+    ) throws -> FrontmostWindowScreenshot {
         guard #available(macOS 14.0, *) else {
-            throw MusicWindowScreenshotError.screenCaptureKitRequiresMacOS14
+            throw FrontmostWindowScreenshotError.screenCaptureKitRequiresMacOS14
         }
         guard screenCaptureAccess() else {
-            throw MusicWindowScreenshotError.screenRecordingPermissionDenied
+            throw FrontmostWindowScreenshotError.screenRecordingPermissionDenied
         }
 
         let startedAt = CFAbsoluteTimeGetCurrent()
@@ -106,7 +106,9 @@ public final class MusicWindowScreenshotProvider {
                 candidates: identities
             )
         } catch {
-            throw MusicWindowScreenshotError.shareableWindowNotFound(String(describing: error))
+            throw FrontmostWindowScreenshotError.shareableWindowNotFound(
+                String(describing: error)
+            )
         }
         let window = shareableContent.windows[matchingIndex]
         let filter = SCContentFilter(desktopIndependentWindow: window)
@@ -123,7 +125,7 @@ public final class MusicWindowScreenshotProvider {
         try WindowScreenshotPNGWriter.write(image: image, to: destination)
         let imageCaptureDuration = milliseconds(since: imageCaptureStartedAt)
 
-        return MusicWindowScreenshot(
+        return FrontmostWindowScreenshot(
             screenshotURL: destination,
             windowID: resolution.windowID,
             mappingMethod: resolution.method.rawValue,
@@ -146,7 +148,7 @@ public final class MusicWindowScreenshotProvider {
                 box.store(.success(content))
             } else {
                 box.store(.failure(
-                    MusicWindowScreenshotError.shareableContentUnavailable(
+                    FrontmostWindowScreenshotError.shareableContentUnavailable(
                         error?.localizedDescription ?? "unknown error"
                     )
                 ))
@@ -154,7 +156,7 @@ public final class MusicWindowScreenshotProvider {
             semaphore.signal()
         }
         guard semaphore.wait(timeout: .now() + callbackTimeout) == .success else {
-            throw MusicWindowScreenshotError.callbackTimedOut(stage: "shareable content")
+            throw FrontmostWindowScreenshotError.callbackTimedOut(stage: "shareable content")
         }
         return try box.result()!.get()
     }
@@ -174,7 +176,7 @@ public final class MusicWindowScreenshotProvider {
                 box.store(.success(image))
             } else {
                 box.store(.failure(
-                    MusicWindowScreenshotError.imageCaptureFailed(
+                    FrontmostWindowScreenshotError.imageCaptureFailed(
                         error?.localizedDescription ?? "unknown error"
                     )
                 ))
@@ -182,7 +184,7 @@ public final class MusicWindowScreenshotProvider {
             semaphore.signal()
         }
         guard semaphore.wait(timeout: .now() + callbackTimeout) == .success else {
-            throw MusicWindowScreenshotError.callbackTimedOut(stage: "image capture")
+            throw FrontmostWindowScreenshotError.callbackTimedOut(stage: "image capture")
         }
         return try box.result()!.get()
     }

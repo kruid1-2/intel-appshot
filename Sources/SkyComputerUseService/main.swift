@@ -33,16 +33,17 @@ app.setActivationPolicy(.prohibited)
 
 let captureDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent("com.openai.sky.CUAService", isDirectory: true)
-let screenshotURL = captureDirectory.appendingPathComponent("music-window.png")
+let screenshotURL = captureDirectory.appendingPathComponent("frontmost-window.png")
 
-let accessibilityProvider = MusicAccessibilitySnapshotProvider()
-let screenshotProvider = MusicWindowScreenshotProvider()
+let accessibilityProvider = FrontmostAccessibilitySnapshotProvider()
+let screenshotProvider = FrontmostWindowScreenshotProvider()
 let protocolProbe = AppshotProtocolProbe { requestedBundleIdentifier in
     let snapshot = try accessibilityProvider.capture(
         requestedBundleIdentifier: requestedBundleIdentifier
     )
     probeLog(
-        "captured Music AX pid=\(snapshot.processIdentifier) "
+        "captured frontmost AX app=\(snapshot.applicationName) "
+            + "bundle=\(snapshot.bundleIdentifier) pid=\(snapshot.processIdentifier) "
             + "window=\(snapshot.windowTitle) nodes=\(snapshot.nodeCount) "
             + "truncated=\(snapshot.wasTruncated) "
             + "durationMs=\(snapshot.durationMilliseconds)"
@@ -53,7 +54,8 @@ let protocolProbe = AppshotProtocolProbe { requestedBundleIdentifier in
         destination: screenshotURL
     )
     probeLog(
-        "captured Music window screenshot pid=\(snapshot.processIdentifier) "
+        "captured frontmost window screenshot app=\(snapshot.applicationName) "
+            + "bundle=\(snapshot.bundleIdentifier) pid=\(snapshot.processIdentifier) "
             + "windowID=\(screenshot.windowID) mapping=\(screenshot.mappingMethod) "
             + "mappingMs=\(screenshot.mappingDurationMilliseconds) "
             + "shareableContentMs=\(screenshot.shareableContentDurationMilliseconds) "
