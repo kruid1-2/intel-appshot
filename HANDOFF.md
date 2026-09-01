@@ -1,193 +1,282 @@
-# Intel x86_64 Codex Appshot Helper Handoff
+# Intel x86_64 Codex Universal Appshot Helper Handoff
 
-## Project goal
+## Current status
 
-Provide a local Intel Mac / x86_64 compatibility helper that satisfies the current Codex desktop Appshot Apple Event protocol. This checkpoint proves that the original Codex Appshot hotkey and attachment UI can receive metadata, AX text, a screenshot URL, and completion from an x86_64 helper.
+This repository contains a working local Intel Mac / x86_64 implementation of the current Codex desktop Appshot helper contract. The original Codex Appshot hotkey and attachment UI receive real foreground-window Accessibility text and a real PNG screenshot of the same window.
 
-This checkpoint is deliberately a protocol probe. It does not capture a real window and does not implement computer control.
+The implementation is application-generic. Music, Finder, Safari, and Xcode have all passed physical original-Codex end-to-end validation without application-specific capture logic. This project is now in closeout/frozen state; it does not implement computer-control actions.
 
-## Frozen scope
+Stable implementation checkpoint before this documentation-only closeout:
 
-Included:
+`8e3e42dc906289034df0d5022c90a38734cc165b`
 
-- Native x86_64 `SkyComputerUseService` helper bundle.
-- Current Codex Apple Event request decoding and direct-object response encoding.
-- Start-capture registration and four ordered capture updates.
-- Fixed AX text and a generated fixed PNG.
-- Swift protocol tests and a standalone Apple Event probe client.
-- Build/run script and Codex Run action.
+`checkpoint: stable local signing and TCC identity`
 
-Explicitly excluded:
+## Historical progression
 
-- Real foreground-window or full-page capture.
-- Real Accessibility-tree traversal.
-- Mouse clicks, keyboard input, scrolling, or other Computer Use actions.
-- Changes to `/Applications/ChatGPT.app`.
-- OpenAI production signing, entitlements, installer tools, or Computer History.
+The project evolved through five deliberately frozen checkpoints:
 
-## Checkpoint verification
+1. `f48673a` — native x86_64 helper, original Apple Event bridge, four-update protocol, fixed AX text, and fixed probe PNG.
+2. `95ed624` — real Music focused/main-window Accessibility snapshot and bounded tree traversal.
+3. `3748300` — real Music screenshot, exact AX Window to CGWindowID to SCWindow mapping, and ScreenCaptureKit PNG capture.
+4. `587a5a3` — Music-specific providers replaced by generic frontmost-application providers with strict requested/frontmost Bundle ID matching.
+5. `8e3e42d` — stable local signing identity, stable designated requirement, verified installation workflow, and TCC persistence across rebuilds.
 
-- Build command: `./script/build_and_run.sh --build`
-- Build result: success on 2026-08-30; output executable is `Mach-O 64-bit executable x86_64`.
-- Test command: `swift test --disable-sandbox` with module caches redirected to `/private/tmp` when running under Codex sandboxing.
-- Test result: 4/4 passed on 2026-08-30:
-  - `start capture returns started and registers the request`
-  - `next capture update emits the Appshots sequence in protocol order`
-  - `Apple Event bridge returns protocol JSON in the direct object`
-  - `probe screenshot writer creates a non-empty PNG`
-- Standalone Helper integration probe: passed on 2026-08-30 with helper PID `40074`; returned `metadata`, `axText`, `screenshot`, and `completed`, and confirmed the screenshot file exists.
-- Original Codex Appshot checkpoint revalidation: passed from a fresh physical double-Command trigger at 2026-08-30 15:39:39 +0800.
-  - Request ID: `3ab02b8f-b051-4c57-8feb-8a1f97884f87`.
-  - Foreground app: ChatGPT, bundle identifier `com.microsoft.edgemac.app.cadlkienfkclaiaibeoongdcgmdikeeg`.
-  - Updates received: `metadata`, `axText`, `screenshot`, `completed`.
-  - Settled in 719 ms with `status=success`, `hadAxText=true`, and `hadScreenshot=true`.
-  - Returned PNG: 640 x 360 RGBA, 19,114 bytes, SHA-256 `3ea7c15d22fb5f7423a4ac43fa4d6afa32548b20ee3b878974879fe9c1c8881e`.
+The original Apple Event bridge and snapshot protocol shape remained stable while the two initial mock producers were replaced by real, generic capture providers. `ProbeScreenshotWriter` remains only as a legacy protocol-regression fixture; the runtime Helper does not use its fixed PNG.
 
-The source-built `dist` binary and the installed canonical helper currently have the same SHA-256:
+## Implemented scope
 
-`e9a3814a6afd27fd884d453ae83c8ca46607470293d2b24930fb7700302535e1`
+### Intel x86_64 Helper
 
-Installed runtime location:
+- `SkyComputerUseService` builds and runs as a native Mach-O `x86_64` executable.
+- The generated bundle is `Codex Computer Use.app` with Bundle ID `com.openai.sky.CUAService`.
+- The canonical installed runtime location is:
 
-`~/.codex/computer-use/Codex Computer Use.app`
+  `~/.codex/computer-use/Codex Computer Use.app`
 
-Bundle identifier:
+- `script/build_and_run.sh` builds the SwiftPM product, assembles and signs the bundle, verifies the signature, and supports build, run, install, debug, logs/telemetry, and verify modes.
+- `--install` performs a staged, verified replacement of the canonical Helper and preserves the previous bundle until the new bundle passes verification.
+
+### Original Codex snapshot protocol
+
+- Apple Event class: `SkCu`.
+- Apple Event ID: `SndR`.
+- Request type keyword: `RspT`.
+- Request JSON keyword: `ReqD`.
+- Client version keyword: `ClVn`.
+- Accepted client version: `CodexComputerUseNativeBridge-1`.
+- The Apple Event reply returns JSON as `typeData` in the direct object.
+- `ComputerUseIPCAppStartCaptureRequest` returns `{"result":"started"}` and registers the request ID.
+- `ComputerUseIPCAppNextCaptureUpdateRequest` returns exactly:
+
+  `metadata -> axText -> screenshot -> completed`
+
+- `AppshotProbeClient` independently exercises the same PID-targeted Apple Event path and checks the four update types and screenshot-file existence.
+
+### Generic frontmost-application Accessibility snapshot
+
+- `NSWorkspace.shared.frontmostApplication` supplies the real frontmost process.
+- The requested Bundle ID must exactly equal the real frontmost Bundle ID. A missing or different identifier is an explicit failure; the Helper never silently captures another application.
+- The provider creates an AX application element for the real PID.
+- Window selection prefers `AXFocusedWindow` and uses `AXMainWindow` only when the focused window is unavailable.
+- The returned AX text includes the real application name, requested Bundle ID, PID, window title, node count, truncation state, and rendered Accessibility tree.
+- Traversal records role, subrole, title, description, value, help, identifier, enabled, focused, and selected attributes when present.
+- Visible children are preferred over the complete child list.
+- Cyclic elements are visited once.
+- Maximum depth is 30 and maximum node count is 1,200. Reaching either boundary returns the bounded result with `truncated=true`; limits must not be raised merely to make a complex application appear complete.
+
+### AX Window to CGWindowID to SCWindow
+
+The screenshot starts from the exact AX window used for the AX tree:
+
+1. `AXWindowIDCompatibility` dynamically resolves `_AXUIElementGetWindow` with `dlsym` from the process image.
+2. There is no link-time private-symbol dependency and the private call is contained in this narrow compatibility layer.
+3. If the symbol is unavailable, the call fails, or it returns window ID 0, resolution falls back to the strict matcher.
+4. The fallback reads the AX window's exact position and size and searches the Core Graphics window list.
+5. A fallback candidate must have the same PID, layer 0, and exactly equal bounds.
+6. Exactly one candidate is required. No match or more than one match is an explicit failure.
+7. Window titles are never used for fuzzy identity matching.
+8. The resolved CGWindowID and owner PID must then identify exactly one `SCWindow`; duplicate or missing candidates fail explicitly.
+
+This identity chain is what guarantees that AX and screenshot refer to the same window rather than merely the same application.
+
+### ScreenCaptureKit same-window screenshot
+
+- The Helper checks Screen Recording access before capture.
+- Real screenshot capture requires macOS 14 or later because it uses `SCScreenshotManager.captureImage`.
+- `SCShareableContent` is queried for on-screen, non-desktop windows.
+- The exact SCWindow is selected by both CGWindowID and owner PID.
+- Capture uses `SCContentFilter(desktopIndependentWindow:)`.
+- Pixel dimensions are derived from `SCShareableContent.info(for:)` and the window's point-to-pixel scale.
+- The single-window capture keeps the window shadow and hides the cursor.
+- The CGImage is encoded as a real PNG at:
+
+  `$TMPDIR/com.openai.sky.CUAService/frontmost-window.png`
+
+- Shareable-content and image callbacks each have a bounded 10-second timeout.
+
+## Stable local signing and TCC identity
+
+Local signing identity:
+
+`Codex Computer Use Local Development`
+
+Certificate SHA-1:
+
+`7B958AD0A1A95B41F8F78C307FC0AA4651D08807`
+
+Bundle ID:
 
 `com.openai.sky.CUAService`
 
-## Key files and responsibilities
+Stable designated requirement:
 
-### Project and build
+`identifier "com.openai.sky.CUAService" and certificate leaf = H"7b958ad0a1a95b41f8f78c307fc0aa4651d08807"`
 
-- `Package.swift`
-  - Defines the `AppshotShimCore` library, `SkyComputerUseService` executable, `AppshotProbeClient` executable, and `AppshotShimCoreTests`.
-- `script/build_and_run.sh`
-  - Stops an existing helper process, builds `SkyComputerUseService`, assembles `dist/Codex Computer Use.app`, writes its Info.plist, removes extended attributes, ad-hoc signs the bundle, and supports build/run/debug/log/verify modes.
-  - It builds `dist`; it does not install or update the canonical helper under `~/.codex/computer-use`.
-- `.codex/environments/environment.toml`
-  - Connects the Codex Run action to `./script/build_and_run.sh`.
+The designated requirement contains no executable CDHash, so rebuilding the binary does not change the identity used by macOS TCC. Accessibility and Screen Recording permissions were physically verified to survive repeated rebuild/install cycles.
 
-### Runtime helper
+Do not delete, recreate, replace, or rename this signing identity. Doing so changes the certificate leaf hash and invalidates the established TCC identity.
 
-- `Sources/SkyComputerUseService/main.swift`
-  - Creates the AppKit application/run loop required for PID-targeted Apple Events.
-  - Writes the fixed probe PNG to the required service temporary directory.
-  - Supplies the fixed AX text.
-  - Constructs the protocol and Apple Event bridge objects.
-  - Registers the `SkCu` / `SndR` Apple Event handler and runs the service.
-- `Sources/AppshotShimCore/AppshotAppleEventBridge.swift`
-  - Implements the current Codex Apple Event wire boundary.
-  - Validates client version `CodexComputerUseNativeBridge-1`.
-  - Decodes request type (`RspT`) and JSON data (`ReqD`).
-  - Places response JSON as `typeData` in the Apple Event direct object.
-- `Sources/AppshotShimCore/AppshotProtocolProbe.swift`
-  - Dispatches the three known request types.
-  - Registers start-capture request IDs.
-  - Queues and returns `metadata`, `axText`, `screenshot`, and `completed` updates in order.
-  - Returns `{}` for `ComputerUseIPCAppGetSkyshotRequest`; this is only a stub.
-- `Sources/AppshotShimCore/ProbeScreenshotWriter.swift`
-  - Generates the fixed 640 x 360 PNG containing the Intel protocol-probe text.
+The build script requires exactly one matching signing identity, signs a temporary bundle, and validates:
 
-### Verification tools
+- Bundle ID.
+- strict and deep `codesign` verification.
+- the explicit designated requirement.
+- the recorded Authority name.
+- absence of a CDHash-dependent designated requirement.
 
-- `Sources/AppshotProbeClient/main.swift`
-  - Sends the same PID-targeted Apple Events as a standalone integration probe.
-  - Verifies `started`, the four update types, and screenshot-file existence.
-- `Tests/AppshotShimCoreTests/CaptureProtocolTests.swift`
-  - Tests start registration and the exact ordered capture-update sequence.
-- `Tests/AppshotShimCoreTests/AppleEventBridgeTests.swift`
-  - Tests Apple Event decoding and the direct-object JSON response.
-- `Tests/AppshotShimCoreTests/ProbeScreenshotWriterTests.swift`
-  - Tests that the generated screenshot is a nonempty valid PNG.
+This is a local development identity, not OpenAI production signing, notarization, a production Team ID, or a distribution entitlement set.
 
-### Checkpoint documentation
+## Complete runtime data flow
 
-- `.gitignore`
-  - Keeps generated build state, rebuildable bundles, and research artifacts out of Git without deleting them.
-- `docs/superpowers/plans/2026-08-30-freeze-x86-codex-appshot-checkpoint.md`
-  - Records the no-new-feature checkpoint procedure.
-- `HANDOFF.md`
-  - This file.
+1. The user physically triggers the original Codex Appshot shortcut.
+2. Codex identifies the foreground application and creates a request ID.
+3. Codex targets the canonical `SkyComputerUseService` PID and sends the existing `SkCu` / `SndR` Apple Event.
+4. `AppshotAppleEventBridge` validates `ClVn`, decodes `RspT` and `ReqD`, and delegates to `AppshotProtocolProbe`.
+5. The start request passes the requested Bundle ID to the capture provider.
+6. `FrontmostAccessibilitySnapshotProvider` confirms the real frontmost Bundle ID, selects focused/main AX window, and renders the bounded real AX tree.
+7. `FrontmostWindowScreenshotProvider` receives that same AX window and PID.
+8. `AXWindowIDResolver` obtains the CGWindowID through the dynamically resolved private call or the strict unique fallback.
+9. The CGWindowID plus PID selects one exact SCWindow.
+10. ScreenCaptureKit captures that window and `WindowScreenshotPNGWriter` writes the PNG.
+11. `AppshotProtocolProbe` queues metadata, real AX text, real screenshot URL, and completed for the request ID.
+12. Codex polls the next-update request, reads the PNG, attaches the AX text and screenshot, and settles the original Appshot request.
 
-## Mock data locations
+## Physical validation record
 
-Fixed AX text is created in `Sources/SkyComputerUseService/main.swift` when constructing `AppshotProtocolProbe`:
+All rows below used the original Codex Appshot entry point and real foreground applications. The AX content was sufficient to identify the actual window/application content, and the PNG was visually checked against the same window.
 
-`Intel Appshot compatibility probe: Apple Event bridge is active.`
+| App | Bundle ID | AX nodes | AX chars | Truncated | Screenshot | AX/screenshot same window | Final state |
+| --- | --- | ---: | ---: | --- | ---: | --- | --- |
+| Music | `com.apple.Music` | 200 | 18,244 | false | 1960 x 1200 | confirmed | success |
+| Finder | `com.apple.finder` | 306 | 20,353 | false | 1840 x 1008 | confirmed | success |
+| Safari | `com.apple.Safari` | 234 | 22,302 | false | 3032 x 1704 | confirmed | success |
+| Xcode | `com.apple.dt.Xcode` | 145 | 12,403 | false | 2800 x 1742 | confirmed | success |
 
-It is emitted as the `axText` update by `Sources/AppshotShimCore/AppshotProtocolProbe.swift`.
+For every validation row:
 
-The fixed screenshot is drawn in `Sources/AppshotShimCore/ProbeScreenshotWriter.swift`. Its runtime destination is created in `Sources/SkyComputerUseService/main.swift`:
+- `status=success`.
+- `hadAxText=true`.
+- `hadScreenshot=true`.
+- Update order was `metadata -> axText -> screenshot -> completed`.
 
-`$TMPDIR/com.openai.sky.CUAService/intel-appshot-probe.png`
+Application-specific observations:
 
-Its file URL is emitted as the `screenshot` update by `Sources/AppshotShimCore/AppshotProtocolProbe.swift`.
+- Music: real now-playing/lyrics AX and screenshot passed before generic provider work began.
+- Finder: the selected home-folder list and sidebar were present in AX and matched the Finder PNG.
+- Safari: AX included real Apple Support web content inside `AXWebArea`, not only browser chrome; traversal stayed bounded without recursion failure.
+- Xcode: AX identified the real `Xcode.WorkspaceWindow`, project navigator, editor area, toolbar, and debug-bar controls; focused/main selection did not capture a settings panel or floating window.
 
-## Complete data flow
+Finder, Safari, and Xcode all passed the same generic implementation with zero application-specific code changes. That three-application acceptance completed the fourth phase.
 
-1. The user double-presses Command in the original Codex desktop app.
-2. Codex identifies the foreground application and creates an Appshot request ID.
-3. Codex's existing native bridge finds/spawns `~/.codex/computer-use/Codex Computer Use.app` and targets the helper PID.
-4. Codex sends Apple Event class `SkCu`, event ID `SndR`, with:
-   - `RspT`: request type string.
-   - `ReqD`: JSON request as `typeData`.
-   - `ClVn`: `CodexComputerUseNativeBridge-1`.
-5. `NSAppleEventManager` invokes `LoggingAppleEventBridge` in `Sources/SkyComputerUseService/main.swift`.
-6. `LoggingAppleEventBridge` delegates to `AppshotAppleEventBridge`.
-7. `AppshotAppleEventBridge` validates and decodes the event, then calls `AppshotProtocolProbe.handle(requestType:requestJSON:)`.
-8. For `ComputerUseIPCAppStartCaptureRequest`, `AppshotProtocolProbe` stores the request ID and queues:
-   - metadata with the requested bundle identifier;
-   - fixed AX text;
-   - fixed screenshot file URL;
-   - completed.
-9. The start response `{\"result\":\"started\"}` is encoded into the Apple Event reply's direct object.
-10. Codex repeatedly sends `ComputerUseIPCAppNextCaptureUpdateRequest`; each call removes and returns the next queued update through the same bridge/direct-object path.
-11. Codex receives `metadata`, `axText`, `screenshot`, then `completed`, reads the screenshot file, attaches the AX text and PNG to its original Appshot UI, and settles the request.
+## Verification baseline at closeout
 
-## Generated and experimental content left in place
+- SwiftPM package products:
+  - `AppshotShimCore` library.
+  - `SkyComputerUseService` executable.
+  - `AppshotProbeClient` executable.
+- Full SwiftPM suite: 23/23 passing on x86_64.
+- Original protocol regression set: 4/4 passing.
+- Standalone protocol integration: `metadata`, `axText`, `screenshot`, `completed` in exact order with a real screenshot file.
+- Helper build: successful native x86_64 bundle.
+- Stable local signature and designated requirement: verified.
+- Original Codex physical Appshot path: verified across Music, Finder, Safari, and Xcode.
 
-These paths are intentionally not deleted and are not part of the checkpoint commit:
+Sandbox-friendly verification commands redirect SwiftPM caches to `/private/tmp`:
 
-- `.build/` — SwiftPM object files, module caches, indexes, executables, and test bundles; about 200 MB at checkpoint time.
-- `dist/` — rebuildable ad-hoc-signed helper bundle; about 180 KB.
-- `.firecrawl/` — earlier public-issue and community research outputs; about 1 MB.
-- `/private/tmp/codex-intel-appshot-*` and `/private/tmp/intel-appshot-*` — sandbox-safe compiler caches and signing probes outside the repository.
-- `$TMPDIR/com.openai.sky.CUAService/intel-appshot-probe.png` — runtime probe image outside the repository.
+```bash
+env \
+  CLANG_MODULE_CACHE_PATH=/private/tmp/intel-appshot-clang-cache \
+  SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/intel-appshot-clang-cache \
+  SWIFTPM_CUSTOM_CACHE_PATH=/private/tmp/intel-appshot-swiftpm-cache \
+  swift test --disable-sandbox
 
-The installed helper under `~/.codex/computer-use` is runtime state, not a repository artifact. Do not delete it when cleaning the project.
+./script/build_and_run.sh --build
+```
 
-## Known issues and boundaries
+`AppshotProbeClient` requires a running Helper PID and the exact Bundle ID of the real frontmost application.
 
-- AX text and screenshot are fixed probe data, not the foreground application's real contents.
-- There is no click, keyboard, scroll, or control protocol implementation.
-- `ComputerUseIPCAppGetSkyshotRequest` currently returns an empty object.
-- The bridge is tied to the currently observed Codex event codes and client-version string; a Codex update may change them.
-- The helper is ad-hoc signed and has no OpenAI Team ID or production entitlements.
-- The repository's generated bundle may acquire Finder/File Provider extended attributes in the Documents directory. This can make a later strict `codesign --verify` report metadata detritus even though the bundle was signed successfully and the installed helper runs.
-- `Package.swift` declares macOS 13 while the generated app Info.plist declares macOS 14. This does not affect the checkpoint machine but remains an explicit mismatch.
-- `script/build_and_run.sh --build` also stops any currently running helper before rebuilding. The original Codex app will respawn the installed canonical helper on the next physical Appshot trigger.
-- Automated AppleScript modifier-key events did not trigger the Codex global Appshot shortcut; use a physical double-Command press for original-path verification.
-- The repository has no configured Git remote at checkpoint time.
+## Key files
 
-## Next phase
+### Protocol and runtime
 
-The next Agent should first reproduce this checkpoint unchanged. Only after build, 4/4 tests, and a fresh original-Appshot success should it design the real-capture phase.
+- `Sources/SkyComputerUseService/main.swift` — AppKit service lifecycle, provider composition, capture output path, and bounded runtime diagnostics.
+- `Sources/AppshotShimCore/AppshotAppleEventBridge.swift` — unchanged current Codex Apple Event wire boundary.
+- `Sources/AppshotShimCore/AppshotProtocolProbe.swift` — request registration and exact four-update queue.
+- `Sources/AppshotProbeClient/main.swift` — standalone PID-targeted integration probe.
 
-The intended next capability is to replace only the two mock producers:
+### Real AX and window identity
 
-1. Replace fixed PNG generation with real foreground-window capture.
-2. Replace fixed AX text with Accessibility-tree extraction for the requested application/window.
+- `Sources/AppshotShimCore/FrontmostAccessibilitySnapshotProvider.swift` — strict frontmost-app validation, focused/main window selection, AX snapshot rendering.
+- `Sources/AppshotShimCore/AccessibilityTreeTraversal.swift` — cycle-safe depth/node-bounded traversal.
+- `Sources/AppshotShimCore/AXWindowIDCompatibility.swift` — narrow dynamic `_AXUIElementGetWindow` compatibility layer.
+- `Sources/AppshotShimCore/AXWindowIDResolver.swift` — direct mapping plus strict PID/bounds fallback.
+- `Sources/AppshotShimCore/WindowIdentityMatching.swift` — unique Core Graphics and SCWindow identity matchers.
 
-Keep `AppshotAppleEventBridge` and the observed Codex response sequence stable unless new evidence proves the protocol changed. Add tests before changing behavior. Do not add click or keyboard control as part of the real-capture phase.
+### Screenshot and packaging
 
-## First files for the next Agent
+- `Sources/AppshotShimCore/FrontmostWindowScreenshotProvider.swift` — permission check, exact SCWindow selection, ScreenCaptureKit capture, timing/timeout boundaries.
+- `Sources/AppshotShimCore/WindowScreenshotPNGWriter.swift` — CGImage to PNG encoding.
+- `script/build_and_run.sh` — x86_64 bundle assembly, stable local signing, verification, and staged installation.
+- `Package.swift` — SwiftPM products and test target.
 
-Read in this order:
+### Tests
 
-1. `HANDOFF.md`
-2. `Sources/SkyComputerUseService/main.swift`
-3. `Sources/AppshotShimCore/AppshotProtocolProbe.swift`
-4. `Sources/AppshotShimCore/AppshotAppleEventBridge.swift`
-5. `Sources/AppshotShimCore/ProbeScreenshotWriter.swift`
-6. `Tests/AppshotShimCoreTests/CaptureProtocolTests.swift`
-7. `script/build_and_run.sh`
+- `Tests/AppshotShimCoreTests/CaptureProtocolTests.swift`.
+- `Tests/AppshotShimCoreTests/AppleEventBridgeTests.swift`.
+- `Tests/AppshotShimCoreTests/AccessibilityTreeTraversalTests.swift`.
+- `Tests/AppshotShimCoreTests/FrontmostApplicationMatchingTests.swift`.
+- `Tests/AppshotShimCoreTests/WindowIdentityResolutionTests.swift`.
+- `Tests/AppshotShimCoreTests/FrontmostWindowScreenshotPermissionTests.swift`.
+- `Tests/AppshotShimCoreTests/WindowScreenshotPNGWriterTests.swift`.
+- `Tests/AppshotShimCoreTests/BuildSigningWorkflowTests.swift`.
+- `Tests/AppshotShimCoreTests/ProbeScreenshotWriterTests.swift` — legacy fixed-PNG protocol regression only.
+
+## Generated and local runtime state
+
+The following are intentionally not committed:
+
+- `.build/` — SwiftPM build products and indexes.
+- `dist/` — rebuildable signed Helper bundle.
+- `.firecrawl/` — historical external research output.
+- `$TMPDIR/com.openai.sky.CUAService/frontmost-window.png` — current runtime screenshot output.
+- `~/.codex/computer-use/Codex Computer Use.app` — installed canonical runtime Helper.
+
+Opening the package in Xcode during Xcode validation generated an untracked `.swiftpm/` directory. It was not added to Git. The recoverable closeout backup is retained at:
+
+`/private/tmp/xcode-swiftpm-backup.3ZH3lS/.swiftpm`
+
+Do not delete that backup as part of project cleanup. It is temporary-machine state, not a repository artifact.
+
+## Known limitations and boundaries
+
+- Snapshot-only scope: no clicking, keyboard input, scrolling, UI automation actions, OCR, image recognition, or AI analysis layer.
+- `ComputerUseIPCAppGetSkyshotRequest` still returns `{}`; only the observed Appshot capture path is implemented.
+- The bridge is tied to the currently observed Apple Event codes and `CodexComputerUseNativeBridge-1`; a future Codex protocol change may require new evidence and adaptation.
+- `_AXUIElementGetWindow` is private API. It is dynamically resolved and isolated, but macOS may remove or change it.
+- The strict fallback deliberately fails when PID/layer/exact-bounds identity is missing or ambiguous; it does not guess by title or nearest bounds.
+- Capture is limited to windows ScreenCaptureKit exposes as on-screen shareable windows. Minimized, off-screen, protected, or DRM-restricted content may be unavailable or visually restricted.
+- Accessibility output is only as complete as the target application exposes through AX. The 30-depth/1,200-node limits intentionally truncate very large trees.
+- The Helper requires Accessibility and Screen Recording permission for its stable signed identity. A different certificate or Bundle ID is a different TCC identity.
+- The screenshot path is reused for captures; concurrent capture/file-consumption behavior has not been designed or validated.
+- ScreenCaptureKit shareable-content and image stages each time out after 10 seconds.
+- `Package.swift` declares macOS 13 while real screenshot capture and the generated app Info.plist require macOS 14. The runtime provider explicitly rejects older systems.
+- The local identity is not OpenAI production signing/notarization and is intended only for this machine's compatibility Helper.
+- The generated `dist` bundle may reacquire `com.apple.FinderInfo` or File Provider extended attributes in the Documents directory after the build script has verified its temporary signing bundle. A later strict verification can report metadata detritus; `xattr -cr` on the generated bundle restores strict verification without changing the signed executable or signing identity. The staged install path independently clears attributes and verifies before replacement.
+- `script/build_and_run.sh` stops existing `SkyComputerUseService` processes before every mode, including build. Codex can respawn the installed canonical Helper on the next physical Appshot request.
+- Automated modifier-key injection was not accepted as original-path validation; physical shortcut triggering remains the acceptance method.
+
+## Frozen closeout scope
+
+The universal snapshot phase is complete. Do not start click, keyboard, scroll, or other control-capability work from this handoff without a new explicit scope and a new design/verification phase.
+
+If the existing snapshot implementation is revisited, preserve these invariants unless fresh evidence proves a change is required:
+
+- exact requested/frontmost Bundle ID matching;
+- focused window before main window;
+- bounded, cycle-safe AX traversal;
+- one AX window carried into screenshot resolution;
+- exact CGWindowID plus PID SCWindow matching;
+- no fuzzy title match;
+- stable local signing identity and designated requirement;
+- `metadata -> axText -> screenshot -> completed` protocol order.
