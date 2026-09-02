@@ -1,7 +1,77 @@
 import AppKit
 import AppshotShimCore
+import ApplicationServices
+import CoreGraphics
 import Darwin
 import Foundation
+
+private enum PermissionDiagnosticFailure: Error {
+    case bundleIdentifierUnavailable
+    case executablePathUnavailable
+    case outputWriteFailed
+}
+
+@discardableResult
+func writePermissionDiagnostic(_ message: String, to descriptor: Int32) -> Bool {
+    let data = Data(message.utf8)
+    return data.withUnsafeBytes { bytes in
+        guard let baseAddress = bytes.baseAddress else { return data.isEmpty }
+        var offset = 0
+        while offset < bytes.count {
+            let written = Darwin.write(
+                descriptor,
+                baseAddress.advanced(by: offset),
+                bytes.count - offset
+            )
+            if written < 0 {
+                if errno == EINTR {
+                    continue
+                }
+                return false
+            }
+            if written == 0 {
+                return false
+            }
+            offset += written
+        }
+        return true
+    }
+}
+
+if PermissionStatusDiagnostic.isRequested(arguments: CommandLine.arguments) {
+    do {
+        let accessibilityQuery: () throws -> Bool = {
+            AXIsProcessTrusted()
+        }
+        let screenRecordingQuery: () throws -> Bool = {
+            CGPreflightScreenCaptureAccess()
+        }
+        let status = try PermissionStatusDiagnostic.evaluate(
+            accessibilityQuery: accessibilityQuery,
+            screenRecordingQuery: screenRecordingQuery
+        )
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+            throw PermissionDiagnosticFailure.bundleIdentifierUnavailable
+        }
+        guard let executableURL = Bundle.main.executableURL else {
+            throw PermissionDiagnosticFailure.executablePathUnavailable
+        }
+        let output = status.renderedProtocol(
+            bundleIdentifier: bundleIdentifier,
+            executablePath: executableURL.resolvingSymlinksInPath().path
+        )
+        guard writePermissionDiagnostic(output, to: STDOUT_FILENO) else {
+            throw PermissionDiagnosticFailure.outputWriteFailed
+        }
+        Darwin.exit(EXIT_SUCCESS)
+    } catch {
+        writePermissionDiagnostic(
+            "Permission diagnostic failed: \(error)\n",
+            to: STDERR_FILENO
+        )
+        Darwin.exit(EX_SOFTWARE)
+    }
+}
 
 func probeLog(_ message: String) {
     let data = Data("\(message)\n".utf8)

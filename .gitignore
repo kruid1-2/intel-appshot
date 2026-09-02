@@ -1,5 +1,6 @@
 # SwiftPM generated state
 .build/
+.swiftpm/
 
 # Rebuildable signed probe bundle
 dist/

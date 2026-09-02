@@ -6,7 +6,7 @@ This repository contains a working local Intel Mac / x86_64 implementation of th
 
 The implementation is application-generic. Music, Finder, Safari, and Xcode have all passed physical original-Codex end-to-end validation without application-specific capture logic. This project is now in closeout/frozen state; it does not implement computer-control actions.
 
-Stable implementation checkpoint before this documentation-only closeout:
+Stable implementation checkpoint before the hardened local-workflow phase:
 
 `8e3e42dc906289034df0d5022c90a38734cc165b`
 
@@ -14,13 +14,14 @@ Stable implementation checkpoint before this documentation-only closeout:
 
 ## Historical progression
 
-The project evolved through five deliberately frozen checkpoints:
+The project evolved through five deliberately frozen snapshot checkpoints, followed by one local-workflow hardening checkpoint:
 
 1. `f48673a` — native x86_64 helper, original Apple Event bridge, four-update protocol, fixed AX text, and fixed probe PNG.
 2. `95ed624` — real Music focused/main-window Accessibility snapshot and bounded tree traversal.
 3. `3748300` — real Music screenshot, exact AX Window to CGWindowID to SCWindow mapping, and ScreenCaptureKit PNG capture.
 4. `587a5a3` — Music-specific providers replaced by generic frontmost-application providers with strict requested/frontmost Bundle ID matching.
 5. `8e3e42d` — stable local signing identity, stable designated requirement, verified installation workflow, and TCC persistence across rebuilds.
+6. `checkpoint: harden local helper workflow` — authoritative staging, conservative lifecycle control, permission and build-identity diagnostics, aggregate doctor, and final Finder regression evidence.
 
 The original Apple Event bridge and snapshot protocol shape remained stable while the two initial mock producers were replaced by real, generic capture providers. `ProbeScreenshotWriter` remains only as a legacy protocol-regression fixture; the runtime Helper does not use its fixed PNG.
 
@@ -34,8 +35,34 @@ The original Apple Event bridge and snapshot protocol shape remained stable whil
 
   `~/.codex/computer-use/Codex Computer Use.app`
 
-- `script/build_and_run.sh` builds the SwiftPM product, assembles and signs the bundle, verifies the signature, and supports build, run, install, debug, logs/telemetry, and verify modes.
+- `script/build_and_run.sh` builds the SwiftPM product, assembles and signs the bundle, verifies the signature, and supports build, run, install, lifecycle, permission, identity, doctor, debug, logs/telemetry, and verify modes.
 - `--install` performs a staged, verified replacement of the canonical Helper and preserves the previous bundle until the new bundle passes verification.
+
+## Hardened local workflow
+
+Lifecycle and diagnostic commands are dispatched before build. `--status`, `--start`, `--stop`, `--permissions`, `--identity`, and `--doctor` never build or install.
+
+| Command | Behavior |
+| --- | --- |
+| `--build` | Builds once, creates one authoritative staging bundle, signs and verifies it, publishes a non-authoritative `dist` copy, then exits. |
+| `--install` | Runs one build workflow and installs that same verified authoritative staging bundle; it never installs from `dist`. |
+| `--build --install` | Also builds exactly once and installs the same authoritative staging bundle produced by that invocation. |
+| `--start` | Verifies the canonical bundle, refuses foreign/unresolved/duplicate ambiguity, and launches only the canonical app through LaunchServices. |
+| `--stop` | Re-resolves executable mappings and sends TERM only to exact canonical PIDs; timeout never escalates to SIGKILL. |
+| `--status` | Reports installed, canonical, foreign, duplicate, and unresolved process state without mutation. |
+| `--permissions` | Runs a transient canonical-app diagnostic through LaunchServices and reports Accessibility and Screen Recording without prompting or changing TCC. |
+| `--identity` | Reports installed signing/BuildIdentity, non-authoritative dist diagnostics, and running executable vnode identity without mutation. |
+| `--doctor` | Aggregates expected identity, installed/dist identity, runtime vnode state, and permissions, then emits one final `Overall` result. |
+
+The authoritative source for every build workflow is the unique bundle assembled in a secure `/private/tmp/codex-cu-workflow.XXXXXX` staging directory. Signing and strict verification finish there before anything is copied. Its lifetime covers installation. `dist/Codex Computer Use.app` is always a non-authoritative development copy and is never an install source. Documents/File Provider may reattach FinderInfo after the copy; that warning does not change the already verified staging or canonical installation.
+
+Every authoritative build creates exactly one `Contents/Resources/BuildIdentity.plist` before signing. It records a UUID Build ID, Git HEAD, Git dirty state using Git's own tracked/untracked/ignored semantics, architecture, and Bundle ID. The same Build ID follows the one staging bundle into dist and canonical; installation never regenerates it. Whole-file SHA-256 values are diagnostic only and are not version-equality identifiers. Rollback preserves legacy-valid bundles without adding BuildIdentity and reports them as `Build Identity: legacy / missing`.
+
+Runtime identity is based on `/usr/sbin/lsof -a -p PID -d txt -Fn`-style executable mappings plus realpath and device/inode. Every text mapping is considered; basename or path similarity is never accepted. The exact canonical path with the installed vnode is `current`; the same path with a different vnode is `stale`; no exact path is `foreign`; malformed or incomplete evidence is `unresolved`. Stop never signals foreign or unresolved processes.
+
+Permission diagnostics preserve canonical `.app` launch/TCC context. Each invocation uses a unique temporary output directory, accepts only a unique final stdout marker `Permission Diagnostic: completed`, strictly validates the self-reported Bundle ID and executable realpath, parses the payload, and requires the post-call same-name PID set to equal the pre-call set. Denied permissions are valid diagnostic results; infrastructure or identity failures are non-zero. No path prompts, opens Settings, resets TCC, or sends signals.
+
+`--doctor` tries to finish every safe diagnostic before deciding the result. A valid canonical x86_64 bundle with the expected Bundle ID, Authority and designated requirement, valid BuildIdentity and strict signature, granted Accessibility and Screen Recording, and a stopped or current runtime is healthy. Missing/invalid identity, denied permissions, or stale/duplicate/foreign/unresolved runtime state requires attention. A missing or metadata-polluted dist copy is reported but does not by itself make a healthy canonical installation unhealthy.
 
 ### Original Codex snapshot protocol
 
@@ -169,16 +196,34 @@ Application-specific observations:
 
 Finder, Safari, and Xcode all passed the same generic implementation with zero application-specific code changes. That three-application acceptance completed the fourth phase.
 
+### Final Finder workflow regression — 2026-09-02
+
+The fifth-stage closeout used the original Codex physical double-Command entry point with Finder's `a66` home-folder list window in front. No modifier-key injection was used.
+
+- Bundle ID: `com.apple.finder`; application name: `访达`; window title: `a66`.
+- Request ID: `267a3ae6-7e1d-4606-9606-0234467d31c3`.
+- Request created: `2026-09-02T05:30:03.511Z`.
+- AX nodes: 306; the tree contained the real Finder sidebar, selected home folder, list columns, filenames, dates, sizes, kinds, toolbar, and status bar.
+- The attached screenshot showed the same `a66` list window and the same visible rows as the AX tree.
+- Original update order: `metadata -> axText -> screenshot -> completed`.
+- Settled: `status=success`, `hadAxText=true`, `hadScreenshot=true`, `elapsedMs=1203`.
+- Codex launched a second canonical managed instance during the physical request. Post-smoke `--status` conservatively reported duplicate canonical PIDs `38305 38876`; `--stop` revalidated and terminated both with TERM. Final status was stopped, with no foreign or unresolved same-name process.
+- Final stopped `--doctor`: Accessibility granted, Screen Recording granted, `Overall: healthy`.
+
 ## Verification baseline at closeout
 
 - SwiftPM package products:
   - `AppshotShimCore` library.
   - `SkyComputerUseService` executable.
   - `AppshotProbeClient` executable.
-- Full SwiftPM suite: 23/23 passing on x86_64.
+- Full SwiftPM suite: 138/138 passing on x86_64.
 - Original protocol regression set: 4/4 passing.
 - Standalone protocol integration: `metadata`, `axText`, `screenshot`, `completed` in exact order with a real screenshot file.
-- Helper build: successful native x86_64 bundle.
+- Real `--build` and `--install`: successful native x86_64 authoritative staging, stable signing, strict verification, and canonical final verification.
+- Real `--permissions`: Accessibility granted and Screen Recording granted.
+- Real `--identity`: canonical `identity-valid`; installed and dist Build IDs matched. The File Provider-added dist FinderInfo was reported as non-authoritative only.
+- Real lifecycle acceptance: stopped -> current with matching vnode -> stopped.
+- Real `--doctor`: healthy for both stopped and current canonical runtime states.
 - Stable local signature and designated requirement: verified.
 - Original Codex physical Appshot path: verified across Music, Finder, Safari, and Xcode.
 
@@ -192,6 +237,11 @@ env \
   swift test --disable-sandbox
 
 ./script/build_and_run.sh --build
+./script/build_and_run.sh --install
+./script/build_and_run.sh --status
+./script/build_and_run.sh --permissions
+./script/build_and_run.sh --identity
+./script/build_and_run.sh --doctor
 ```
 
 `AppshotProbeClient` requires a running Helper PID and the exact Bundle ID of the real frontmost application.
@@ -230,6 +280,13 @@ env \
 - `Tests/AppshotShimCoreTests/FrontmostWindowScreenshotPermissionTests.swift`.
 - `Tests/AppshotShimCoreTests/WindowScreenshotPNGWriterTests.swift`.
 - `Tests/AppshotShimCoreTests/BuildSigningWorkflowTests.swift`.
+- `Tests/AppshotShimCoreTests/BuildInstallWorkflowTests.swift` — one-build authoritative staging, install, rollback, and test-shim confinement.
+- `Tests/AppshotShimCoreTests/HelperLifecycleWorkflowTests.swift` — canonical/foreign/unresolved lifecycle and debug semantics.
+- `Tests/AppshotShimCoreTests/PermissionStatusTests.swift` — Helper-side read-only permission protocol.
+- `Tests/AppshotShimCoreTests/PermissionStatusWorkflowTests.swift` — LaunchServices completion-marker, identity, timeout, and PID-set synchronization.
+- `Tests/AppshotShimCoreTests/BuildIdentityWorkflowTests.swift` — Build ID generation, Git dirty semantics, propagation, and legacy rollback.
+- `Tests/AppshotShimCoreTests/RuntimeIdentityWorkflowTests.swift` — current/stale vnode, duplicate, foreign, and unresolved reporting.
+- `Tests/AppshotShimCoreTests/DoctorWorkflowTests.swift` — 24 aggregate health and non-mutation scenarios.
 - `Tests/AppshotShimCoreTests/ProbeScreenshotWriterTests.swift` — legacy fixed-PNG protocol regression only.
 
 ## Generated and local runtime state
@@ -237,10 +294,12 @@ env \
 The following are intentionally not committed:
 
 - `.build/` — SwiftPM build products and indexes.
+- `.swiftpm/` — local SwiftPM/Xcode workspace metadata.
 - `dist/` — rebuildable signed Helper bundle.
 - `.firecrawl/` — historical external research output.
 - `$TMPDIR/com.openai.sky.CUAService/frontmost-window.png` — current runtime screenshot output.
 - `~/.codex/computer-use/Codex Computer Use.app` — installed canonical runtime Helper.
+- `BuildIdentity.plist` files inside generated bundles — per-build signed resources, never fixed repository fixtures.
 
 Opening the package in Xcode during Xcode validation generated an untracked `.swiftpm/` directory. It was not added to Git. The recoverable closeout backup is retained at:
 
@@ -262,8 +321,8 @@ Do not delete that backup as part of project cleanup. It is temporary-machine st
 - ScreenCaptureKit shareable-content and image stages each time out after 10 seconds.
 - `Package.swift` declares macOS 13 while real screenshot capture and the generated app Info.plist require macOS 14. The runtime provider explicitly rejects older systems.
 - The local identity is not OpenAI production signing/notarization and is intended only for this machine's compatibility Helper.
-- The generated `dist` bundle may reacquire `com.apple.FinderInfo` or File Provider extended attributes in the Documents directory after the build script has verified its temporary signing bundle. A later strict verification can report metadata detritus; `xattr -cr` on the generated bundle restores strict verification without changing the signed executable or signing identity. The staged install path independently clears attributes and verifies before replacement.
-- `script/build_and_run.sh` stops existing `SkyComputerUseService` processes before every mode, including build. Codex can respawn the installed canonical Helper on the next physical Appshot request.
+- The generated `dist` bundle may reacquire `com.apple.FinderInfo` or File Provider extended attributes in the Documents directory after the build script has verified its temporary signing bundle. A later strict verification reports that metadata detritus without changing the authoritative result; install never reads from dist. The staged install path independently clears attributes and verifies before replacement. Read-only identity and doctor modes do not clean xattrs.
+- Build does not stop a running Helper. Lifecycle commands are explicit, and status/permissions/identity/doctor never build or install. Codex may still spawn another canonical managed Helper on a physical Appshot request; duplicate instances are reported and only exact canonical PIDs are eligible for explicit stop.
 - Automated modifier-key injection was not accepted as original-path validation; physical shortcut triggering remains the acceptance method.
 
 ## Frozen closeout scope
