@@ -97,3 +97,67 @@ func nextCaptureUpdateSequence() throws {
         #expect(actualObject == expectedObject)
     }
 }
+
+@Test("screenshot update owns the transition snapshot and completed waits behind it")
+func screenshotOwnsTransitionSnapshotBeforeCompleted() throws {
+    var receivedRequest: AppshotCaptureRequest?
+    let screenshotURL = URL(
+        fileURLWithPath: "/tmp/com.openai.sky.CUAService/finder-final.png"
+    )
+    let transitionURL = URL(
+        fileURLWithPath: "/tmp/com.openai.sky.CUAService/finder-transition.png"
+    )
+    let probe = AppshotProtocolProbe { request in
+        receivedRequest = request
+        return AppshotCapturePayload(
+            screenshotURL: screenshotURL,
+            accessibilityText: "Finder accessibility content",
+            transitionSnapshotURL: transitionURL,
+            transitionSnapshotHeight: 322
+        )
+    }
+
+    let startReply = try #require(
+        JSONSerialization.jsonObject(
+            with: probe.handle(
+                requestType: "ComputerUseIPCAppStartCaptureRequest",
+                requestJSON: Data(
+                    #"{"requestId":"request-transition","app":"com.apple.finder","animationTarget":{"codexDisplay":{"scaleFactor":2},"destinationFrame":{"width":464,"height":280,"x":100,"y":200},"destinationPrimaryTextColor":{"red":17,"green":34,"blue":51}},"version":2}"#.utf8
+                )
+            )
+        ) as? [String: Any]
+    )
+
+    #expect(startReply["result"] as? String == "started")
+    #expect(startReply["transitionSnapshotHeight"] as? Double == 322)
+    #expect(receivedRequest?.requestID == "request-transition")
+    #expect(receivedRequest?.bundleIdentifier == "com.apple.finder")
+    #expect(receivedRequest?.animationTarget?.destinationFrameWidth == 464)
+    #expect(receivedRequest?.animationTarget?.displayScaleFactor == 2)
+    #expect(
+        receivedRequest?.animationTarget?.destinationPrimaryTextColor
+            == AppshotRGBColor(red: 17, green: 34, blue: 51)
+    )
+
+    let nextRequest = Data(#"{"requestId":"request-transition"}"#.utf8)
+    let updates = try (0..<4).map { _ in
+        try #require(
+            JSONSerialization.jsonObject(
+                with: probe.handle(
+                    requestType: "ComputerUseIPCAppNextCaptureUpdateRequest",
+                    requestJSON: nextRequest
+                )
+            ) as? [String: Any]
+        )
+    }
+
+    #expect(updates.map { $0["type"] as? String } == [
+        "metadata", "axText", "screenshot", "completed"
+    ])
+    #expect(updates[2]["screenshotURL"] as? String == screenshotURL.absoluteString)
+    #expect(
+        updates[2]["transitionSnapshotURL"] as? String
+            == transitionURL.absoluteString
+    )
+    #expect(updates[3]["transitionSnapshotURL"] == nil)
+}

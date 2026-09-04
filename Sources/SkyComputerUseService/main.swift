@@ -4,6 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import Darwin
 import Foundation
+import UniformTypeIdentifiers
 
 private enum PermissionDiagnosticFailure: Error {
     case bundleIdentifierUnavailable
@@ -107,9 +108,9 @@ let screenshotURL = captureDirectory.appendingPathComponent("frontmost-window.pn
 
 let accessibilityProvider = FrontmostAccessibilitySnapshotProvider()
 let screenshotProvider = FrontmostWindowScreenshotProvider()
-let protocolProbe = AppshotProtocolProbe { requestedBundleIdentifier in
+let protocolProbe = AppshotProtocolProbe { (request: AppshotCaptureRequest) in
     let snapshot = try accessibilityProvider.capture(
-        requestedBundleIdentifier: requestedBundleIdentifier
+        requestedBundleIdentifier: request.bundleIdentifier
     )
     probeLog(
         "captured frontmost AX app=\(snapshot.applicationName) "
@@ -132,9 +133,55 @@ let protocolProbe = AppshotProtocolProbe { requestedBundleIdentifier in
             + "imageMs=\(screenshot.imageCaptureDurationMilliseconds) "
             + "totalMs=\(screenshot.totalDurationMilliseconds)"
     )
+    var transitionSnapshotURL: URL?
+    var transitionSnapshotHeight: Double?
+    if let animationTarget = request.animationTarget {
+        let safeRequestID = request.requestID.map { character in
+            character.isLetter || character.isNumber || character == "-"
+                ? character
+                : "-"
+        }
+        let destination = captureDirectory.appendingPathComponent(
+            "transition-\(String(safeRequestID)).png"
+        )
+        let applicationIcon: NSImage
+        if let applicationURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: snapshot.bundleIdentifier
+        ) {
+            applicationIcon = NSWorkspace.shared.icon(forFile: applicationURL.path)
+        } else {
+            applicationIcon = NSWorkspace.shared.icon(for: .application)
+        }
+        let trimmedWindowTitle = snapshot.windowTitle.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let title = trimmedWindowTitle.isEmpty
+            ? snapshot.applicationName
+            : trimmedWindowTitle
+        do {
+            let transition = try AppshotTransitionSnapshotRenderer.render(
+                screenshotURL: screenshot.screenshotURL,
+                applicationIcon: applicationIcon,
+                title: title,
+                animationTarget: animationTarget,
+                destinationURL: destination
+            )
+            transitionSnapshotURL = transition.url
+            transitionSnapshotHeight = transition.transitionSnapshotHeight
+            probeLog(
+                "rendered Appshot transition snapshot "
+                    + "height=\(transition.transitionSnapshotHeight) "
+                    + "file=\(transition.url.lastPathComponent)"
+            )
+        } catch {
+            probeLog("transition snapshot unavailable error=\(error)")
+        }
+    }
     return AppshotCapturePayload(
         screenshotURL: screenshot.screenshotURL,
-        accessibilityText: snapshot.accessibilityText
+        accessibilityText: snapshot.accessibilityText,
+        transitionSnapshotURL: transitionSnapshotURL,
+        transitionSnapshotHeight: transitionSnapshotHeight
     )
 }
 let appleEventBridge = AppshotAppleEventBridge(protocolProbe: protocolProbe)
