@@ -100,89 +100,202 @@ final class LoggingAppleEventBridge: NSObject {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.prohibited)
+app.setActivationPolicy(.accessory)
 
 let captureDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent("com.openai.sky.CUAService", isDirectory: true)
-let screenshotURL = captureDirectory.appendingPathComponent("frontmost-window.png")
 
 let accessibilityProvider = FrontmostAccessibilitySnapshotProvider()
 let screenshotProvider = FrontmostWindowScreenshotProvider()
+let magicMoveCoordinator = AppshotMagicMoveCoordinator()
+let accessibilityQueue = DispatchQueue(
+    label: "com.openai.sky.CUAService.appshot.accessibility",
+    qos: .userInitiated
+)
+let screenshotEncodingQueue = DispatchQueue(
+    label: "com.openai.sky.CUAService.appshot.screenshot-encoding",
+    qos: .userInitiated
+)
+let applicationIconQueue = DispatchQueue(
+    label: "com.openai.sky.CUAService.appshot.application-icon",
+    qos: .userInitiated
+)
 let protocolProbe = AppshotProtocolProbe { (request: AppshotCaptureRequest) in
-    let snapshot = try accessibilityProvider.capture(
+    let safeRequestID = request.requestID.map { character in
+        character.isLetter || character.isNumber || character == "-"
+            ? character
+            : "-"
+    }
+    let requestScreenshotURL = captureDirectory.appendingPathComponent(
+        "frontmost-window-\(String(safeRequestID)).png"
+    )
+    let selectionStartedAt = CFAbsoluteTimeGetCurrent()
+    let selection = try accessibilityProvider.locateWindow(
         requestedBundleIdentifier: request.bundleIdentifier
     )
-    probeLog(
-        "captured frontmost AX app=\(snapshot.applicationName) "
-            + "bundle=\(snapshot.bundleIdentifier) pid=\(snapshot.processIdentifier) "
-            + "window=\(snapshot.windowTitle) nodes=\(snapshot.nodeCount) "
-            + "truncated=\(snapshot.wasTruncated) "
-            + "durationMs=\(snapshot.durationMilliseconds)"
-    )
-    let screenshot = try screenshotProvider.capture(
-        accessibilityWindow: snapshot.windowElement,
-        processIdentifier: snapshot.processIdentifier,
-        destination: screenshotURL
+    let selectionDuration = Int(
+        ((CFAbsoluteTimeGetCurrent() - selectionStartedAt) * 1_000).rounded()
     )
     probeLog(
-        "captured frontmost window screenshot app=\(snapshot.applicationName) "
-            + "bundle=\(snapshot.bundleIdentifier) pid=\(snapshot.processIdentifier) "
-            + "windowID=\(screenshot.windowID) mapping=\(screenshot.mappingMethod) "
-            + "mappingMs=\(screenshot.mappingDurationMilliseconds) "
-            + "shareableContentMs=\(screenshot.shareableContentDurationMilliseconds) "
-            + "imageMs=\(screenshot.imageCaptureDurationMilliseconds) "
-            + "totalMs=\(screenshot.totalDurationMilliseconds)"
+        "selected frontmost AX window app=\(selection.applicationName) "
+            + "bundle=\(selection.bundleIdentifier) pid=\(selection.processIdentifier) "
+            + "window=\(selection.windowTitle) durationMs=\(selectionDuration)"
     )
-    var transitionSnapshotURL: URL?
-    var transitionSnapshotHeight: Double?
-    if let animationTarget = request.animationTarget {
-        let safeRequestID = request.requestID.map { character in
-            character.isLetter || character.isNumber || character == "-"
-                ? character
-                : "-"
-        }
-        let destination = captureDirectory.appendingPathComponent(
-            "transition-\(String(safeRequestID)).png"
-        )
-        let applicationIcon: NSImage
-        if let applicationURL = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: snapshot.bundleIdentifier
-        ) {
-            applicationIcon = NSWorkspace.shared.icon(forFile: applicationURL.path)
-        } else {
-            applicationIcon = NSWorkspace.shared.icon(for: .application)
-        }
-        let trimmedWindowTitle = snapshot.windowTitle.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        let title = trimmedWindowTitle.isEmpty
-            ? snapshot.applicationName
-            : trimmedWindowTitle
-        do {
-            let transition = try AppshotTransitionSnapshotRenderer.render(
-                screenshotURL: screenshot.screenshotURL,
-                applicationIcon: applicationIcon,
-                title: title,
-                animationTarget: animationTarget,
-                destinationURL: destination
-            )
-            transitionSnapshotURL = transition.url
-            transitionSnapshotHeight = transition.transitionSnapshotHeight
-            probeLog(
-                "rendered Appshot transition snapshot "
-                    + "height=\(transition.transitionSnapshotHeight) "
-                    + "file=\(transition.url.lastPathComponent)"
-            )
-        } catch {
-            probeLog("transition snapshot unavailable error=\(error)")
+    let accessibilityWork = AppshotBackgroundWork<FrontmostAccessibilitySnapshot>(
+        queue: accessibilityQueue
+    ) {
+        accessibilityProvider.capture(selection: selection)
+    }
+    let iconWork = request.animationTarget.map { _ in
+        AppshotBackgroundWork<CGImage>(queue: applicationIconQueue) {
+            let applicationIcon: NSImage
+            if let applicationURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: selection.bundleIdentifier
+            ) {
+                applicationIcon = NSWorkspace.shared.icon(forFile: applicationURL.path)
+            } else {
+                applicationIcon = NSWorkspace.shared.icon(for: .application)
+            }
+            var iconRect = CGRect(origin: .zero, size: applicationIcon.size)
+            guard let iconImage = applicationIcon.cgImage(
+                forProposedRect: &iconRect,
+                context: nil,
+                hints: nil
+            ) else {
+                throw AppshotMagicMoveControllerError.applicationIconUnavailable
+            }
+            return iconImage
         }
     }
-    return AppshotCapturePayload(
-        screenshotURL: screenshot.screenshotURL,
-        accessibilityText: snapshot.accessibilityText,
-        transitionSnapshotURL: transitionSnapshotURL,
-        transitionSnapshotHeight: transitionSnapshotHeight
+    let imageCapture = try screenshotProvider.captureImage(
+        accessibilityWindow: selection.windowElement,
+        processIdentifier: selection.processIdentifier
     )
+    probeLog(
+        "captured frontmost window image app=\(selection.applicationName) "
+            + "bundle=\(selection.bundleIdentifier) pid=\(selection.processIdentifier) "
+            + "windowID=\(imageCapture.windowID) mapping=\(imageCapture.mappingMethod) "
+            + "frame=\(imageCapture.windowFrame) "
+            + "mappingMs=\(imageCapture.mappingDurationMilliseconds) "
+            + "shareableContentMs=\(imageCapture.shareableContentDurationMilliseconds) "
+            + "imageMs=\(imageCapture.imageCaptureDurationMilliseconds) "
+            + "totalMs=\(imageCapture.totalDurationMilliseconds)"
+    )
+    let screenshotWork = AppshotBackgroundWork<FrontmostWindowScreenshot>(
+        queue: screenshotEncodingQueue
+    ) {
+        try imageCapture.writePNG(to: requestScreenshotURL)
+    }
+    var startedMove: AppshotMagicMoveController?
+    do {
+        var transitionSnapshotURL: URL?
+        var transitionSnapshotHeight: Double?
+        var animationDuration: Double?
+        var transitionSpringResponse: Double?
+        var transitionSpringDampingFraction: Double?
+        var composerHandoffFinished: (() -> Void)?
+        if let animationTarget = request.animationTarget {
+            let destination = captureDirectory.appendingPathComponent(
+                "transition-\(String(safeRequestID)).png"
+            )
+            let applicationIconImage = try iconWork!.wait()
+            let trimmedWindowTitle = selection.windowTitle.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            let title = trimmedWindowTitle.isEmpty
+                ? selection.applicationName
+                : trimmedWindowTitle
+            do {
+                let move = try magicMoveCoordinator.start(
+                    requestID: request.requestID,
+                    screenshotImage: imageCapture.image,
+                    sourceFrame: imageCapture.windowFrame,
+                    applicationIconImage: applicationIconImage,
+                    title: title,
+                    animationTarget: animationTarget,
+                    transitionSnapshotURL: destination
+                )
+                startedMove = move
+                transitionSnapshotURL = move.transitionSnapshot.url
+                transitionSnapshotHeight = move.transitionSnapshot.transitionSnapshotHeight
+                animationDuration = move.spring.animationDuration
+                transitionSpringResponse = move.spring.response
+                transitionSpringDampingFraction = move.spring.dampingFraction
+                composerHandoffFinished = {
+                    MainActor.assumeIsolated {
+                        magicMoveCoordinator.markComposerHandoffFinished(
+                            requestID: request.requestID
+                        )
+                    }
+                }
+                probeLog(
+                    "prepared Appshot magic move "
+                        + "response=\(move.spring.response) "
+                        + "damping=\(move.spring.dampingFraction) "
+                        + "duration=\(move.spring.animationDuration) "
+                        + "height=\(move.transitionSnapshot.transitionSnapshotHeight) "
+                        + "file=\(move.transitionSnapshot.url.lastPathComponent)"
+                )
+            } catch {
+                probeLog("magic move unavailable error=\(error)")
+                let screenshot = try screenshotWork.wait()
+                do {
+                    let transition = try AppshotTransitionSnapshotRenderer.render(
+                        screenshotURL: screenshot.screenshotURL,
+                        applicationIcon: NSImage(
+                            cgImage: applicationIconImage,
+                            size: .zero
+                        ),
+                        title: title,
+                        animationTarget: animationTarget,
+                        destinationURL: destination
+                    )
+                    transitionSnapshotURL = transition.url
+                    transitionSnapshotHeight = transition.transitionSnapshotHeight
+                    probeLog(
+                        "rendered fallback Appshot transition snapshot "
+                            + "height=\(transition.transitionSnapshotHeight) "
+                            + "file=\(transition.url.lastPathComponent)"
+                    )
+                } catch {
+                    probeLog("transition snapshot unavailable error=\(error)")
+                }
+            }
+        }
+
+        let snapshot = try accessibilityWork.wait()
+        let screenshot = try screenshotWork.wait()
+        probeLog(
+            "captured frontmost AX app=\(snapshot.applicationName) "
+                + "bundle=\(snapshot.bundleIdentifier) pid=\(snapshot.processIdentifier) "
+                + "window=\(snapshot.windowTitle) nodes=\(snapshot.nodeCount) "
+                + "truncated=\(snapshot.wasTruncated) "
+                + "durationMs=\(snapshot.durationMilliseconds)"
+        )
+        probeLog(
+            "persisted frontmost window screenshot app=\(snapshot.applicationName) "
+                + "bundle=\(snapshot.bundleIdentifier) pid=\(snapshot.processIdentifier) "
+                + "windowID=\(screenshot.windowID) mapping=\(screenshot.mappingMethod) "
+                + "frame=\(screenshot.windowFrame) "
+                + "mappingMs=\(screenshot.mappingDurationMilliseconds) "
+                + "shareableContentMs=\(screenshot.shareableContentDurationMilliseconds) "
+                + "imageAndPNGMs=\(screenshot.imageCaptureDurationMilliseconds) "
+                + "totalMs=\(screenshot.totalDurationMilliseconds)"
+        )
+        return AppshotCapturePayload(
+            screenshotURL: screenshot.screenshotURL,
+            accessibilityText: snapshot.accessibilityText,
+            transitionSnapshotURL: transitionSnapshotURL,
+            transitionSnapshotHeight: transitionSnapshotHeight,
+            animationDuration: animationDuration,
+            transitionSpringResponse: transitionSpringResponse,
+            transitionSpringDampingFraction: transitionSpringDampingFraction,
+            composerHandoffFinished: composerHandoffFinished
+        )
+    } catch {
+        startedMove?.cancel()
+        throw error
+    }
 }
 let appleEventBridge = AppshotAppleEventBridge(protocolProbe: protocolProbe)
 let loggingBridge = LoggingAppleEventBridge(bridge: appleEventBridge)

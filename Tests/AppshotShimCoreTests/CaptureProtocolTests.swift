@@ -101,6 +101,7 @@ func nextCaptureUpdateSequence() throws {
 @Test("screenshot update owns the transition snapshot and completed waits behind it")
 func screenshotOwnsTransitionSnapshotBeforeCompleted() throws {
     var receivedRequest: AppshotCaptureRequest?
+    var composerHandoffCount = 0
     let screenshotURL = URL(
         fileURLWithPath: "/tmp/com.openai.sky.CUAService/finder-final.png"
     )
@@ -113,7 +114,11 @@ func screenshotOwnsTransitionSnapshotBeforeCompleted() throws {
             screenshotURL: screenshotURL,
             accessibilityText: "Finder accessibility content",
             transitionSnapshotURL: transitionURL,
-            transitionSnapshotHeight: 322
+            transitionSnapshotHeight: 322,
+            animationDuration: 1.44,
+            transitionSpringResponse: 0.43,
+            transitionSpringDampingFraction: 0.73,
+            composerHandoffFinished: { composerHandoffCount += 1 }
         )
     }
 
@@ -122,7 +127,7 @@ func screenshotOwnsTransitionSnapshotBeforeCompleted() throws {
             with: probe.handle(
                 requestType: "ComputerUseIPCAppStartCaptureRequest",
                 requestJSON: Data(
-                    #"{"requestId":"request-transition","app":"com.apple.finder","animationTarget":{"codexDisplay":{"scaleFactor":2},"destinationFrame":{"width":464,"height":280,"x":100,"y":200},"destinationPrimaryTextColor":{"red":17,"green":34,"blue":51}},"version":2}"#.utf8
+                    #"{"requestId":"request-transition","app":"com.apple.finder","animationTarget":{"codexDisplay":{"id":7,"bounds":{"x":0,"y":0,"width":1728,"height":1117},"workArea":{"x":0,"y":25,"width":1728,"height":1067},"scaleFactor":2},"destinationBackgroundColor":{"red":240,"green":241,"blue":242},"destinationCornerRadius":12,"destinationFrame":{"width":464,"height":280,"x":100,"y":200},"destinationPrimaryTextColor":{"red":17,"green":34,"blue":51}},"version":2}"#.utf8
                 )
             )
         ) as? [String: Any]
@@ -130,17 +135,43 @@ func screenshotOwnsTransitionSnapshotBeforeCompleted() throws {
 
     #expect(startReply["result"] as? String == "started")
     #expect(startReply["transitionSnapshotHeight"] as? Double == 322)
+    #expect(startReply["animationDuration"] as? Double == 1.44)
+    #expect(startReply["transitionSpringResponse"] as? Double == 0.43)
+    #expect(startReply["transitionSpringDampingFraction"] as? Double == 0.73)
     #expect(receivedRequest?.requestID == "request-transition")
     #expect(receivedRequest?.bundleIdentifier == "com.apple.finder")
-    #expect(receivedRequest?.animationTarget?.destinationFrameWidth == 464)
-    #expect(receivedRequest?.animationTarget?.displayScaleFactor == 2)
+    #expect(receivedRequest?.animationTarget?.destinationFrame == CGRect(
+        x: 100,
+        y: 200,
+        width: 464,
+        height: 280
+    ))
+    #expect(receivedRequest?.animationTarget?.destinationCornerRadius == 12)
+    #expect(receivedRequest?.animationTarget?.codexDisplay.id == 7)
+    #expect(receivedRequest?.animationTarget?.codexDisplay.scaleFactor == 2)
+    #expect(receivedRequest?.animationTarget?.codexDisplay.bounds == CGRect(
+        x: 0,
+        y: 0,
+        width: 1728,
+        height: 1117
+    ))
+    #expect(receivedRequest?.animationTarget?.codexDisplay.workArea == CGRect(
+        x: 0,
+        y: 25,
+        width: 1728,
+        height: 1067
+    ))
+    #expect(
+        receivedRequest?.animationTarget?.destinationBackgroundColor
+            == AppshotRGBColor(red: 240, green: 241, blue: 242)
+    )
     #expect(
         receivedRequest?.animationTarget?.destinationPrimaryTextColor
             == AppshotRGBColor(red: 17, green: 34, blue: 51)
     )
 
     let nextRequest = Data(#"{"requestId":"request-transition"}"#.utf8)
-    let updates = try (0..<4).map { _ in
+    let firstUpdates = try (0..<3).map { _ in
         try #require(
             JSONSerialization.jsonObject(
                 with: probe.handle(
@@ -150,6 +181,16 @@ func screenshotOwnsTransitionSnapshotBeforeCompleted() throws {
             ) as? [String: Any]
         )
     }
+    #expect(composerHandoffCount == 0)
+    let completedUpdate = try #require(
+        JSONSerialization.jsonObject(
+            with: probe.handle(
+                requestType: "ComputerUseIPCAppNextCaptureUpdateRequest",
+                requestJSON: nextRequest
+            )
+        ) as? [String: Any]
+    )
+    let updates = firstUpdates + [completedUpdate]
 
     #expect(updates.map { $0["type"] as? String } == [
         "metadata", "axText", "screenshot", "completed"
@@ -160,4 +201,5 @@ func screenshotOwnsTransitionSnapshotBeforeCompleted() throws {
             == transitionURL.absoluteString
     )
     #expect(updates[3]["transitionSnapshotURL"] == nil)
+    #expect(composerHandoffCount == 1)
 }

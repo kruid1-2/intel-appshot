@@ -3,9 +3,59 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+public struct FrontmostWindowImageCapture: @unchecked Sendable {
+    public let image: CGImage
+    public let windowID: CGWindowID
+    public let windowFrame: CGRect
+    public let mappingMethod: String
+    public let mappingDurationMilliseconds: Int
+    public let shareableContentDurationMilliseconds: Int
+    public let imageCaptureDurationMilliseconds: Int
+    public let totalDurationMilliseconds: Int
+
+    public init(
+        image: CGImage,
+        windowID: CGWindowID,
+        windowFrame: CGRect,
+        mappingMethod: String,
+        mappingDurationMilliseconds: Int,
+        shareableContentDurationMilliseconds: Int,
+        imageCaptureDurationMilliseconds: Int,
+        totalDurationMilliseconds: Int
+    ) {
+        self.image = image
+        self.windowID = windowID
+        self.windowFrame = windowFrame
+        self.mappingMethod = mappingMethod
+        self.mappingDurationMilliseconds = mappingDurationMilliseconds
+        self.shareableContentDurationMilliseconds = shareableContentDurationMilliseconds
+        self.imageCaptureDurationMilliseconds = imageCaptureDurationMilliseconds
+        self.totalDurationMilliseconds = totalDurationMilliseconds
+    }
+
+    public func writePNG(to destination: URL) throws -> FrontmostWindowScreenshot {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        try WindowScreenshotPNGWriter.write(image: image, to: destination)
+        let writeDuration = Int(
+            ((CFAbsoluteTimeGetCurrent() - startedAt) * 1_000).rounded()
+        )
+        return FrontmostWindowScreenshot(
+            screenshotURL: destination,
+            windowID: windowID,
+            windowFrame: windowFrame,
+            mappingMethod: mappingMethod,
+            mappingDurationMilliseconds: mappingDurationMilliseconds,
+            shareableContentDurationMilliseconds: shareableContentDurationMilliseconds,
+            imageCaptureDurationMilliseconds: imageCaptureDurationMilliseconds + writeDuration,
+            totalDurationMilliseconds: totalDurationMilliseconds + writeDuration
+        )
+    }
+}
+
 public struct FrontmostWindowScreenshot {
     public let screenshotURL: URL
     public let windowID: CGWindowID
+    public let windowFrame: CGRect
     public let mappingMethod: String
     public let mappingDurationMilliseconds: Int
     public let shareableContentDurationMilliseconds: Int
@@ -74,6 +124,17 @@ public final class FrontmostWindowScreenshotProvider {
         processIdentifier: pid_t,
         destination: URL
     ) throws -> FrontmostWindowScreenshot {
+        let capture = try captureImage(
+            accessibilityWindow: accessibilityWindow,
+            processIdentifier: processIdentifier
+        )
+        return try capture.writePNG(to: destination)
+    }
+
+    public func captureImage(
+        accessibilityWindow: AXUIElement,
+        processIdentifier: pid_t
+    ) throws -> FrontmostWindowImageCapture {
         guard #available(macOS 14.0, *) else {
             throw FrontmostWindowScreenshotError.screenCaptureKitRequiresMacOS14
         }
@@ -122,12 +183,12 @@ public final class FrontmostWindowScreenshotProvider {
 
         let imageCaptureStartedAt = CFAbsoluteTimeGetCurrent()
         let image = try captureImage(filter: filter, configuration: configuration)
-        try WindowScreenshotPNGWriter.write(image: image, to: destination)
         let imageCaptureDuration = milliseconds(since: imageCaptureStartedAt)
 
-        return FrontmostWindowScreenshot(
-            screenshotURL: destination,
+        return FrontmostWindowImageCapture(
+            image: image,
             windowID: resolution.windowID,
+            windowFrame: window.frame,
             mappingMethod: resolution.method.rawValue,
             mappingDurationMilliseconds: mappingDuration,
             shareableContentDurationMilliseconds: shareableContentDuration,

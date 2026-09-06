@@ -2,7 +2,56 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-public struct FrontmostAccessibilitySnapshot {
+public struct FrontmostAccessibilityWindowSelection: @unchecked Sendable {
+    public let applicationName: String
+    public let bundleIdentifier: String
+    public let processIdentifier: pid_t
+    public let windowTitle: String
+    public let windowElement: AXUIElement
+
+    public init(
+        applicationName: String,
+        bundleIdentifier: String,
+        processIdentifier: pid_t,
+        windowTitle: String,
+        windowElement: AXUIElement
+    ) {
+        self.applicationName = applicationName
+        self.bundleIdentifier = bundleIdentifier
+        self.processIdentifier = processIdentifier
+        self.windowTitle = windowTitle
+        self.windowElement = windowElement
+    }
+
+    func snapshot(
+        traversal: AccessibilityTreeTraversalResult,
+        durationMilliseconds: Int
+    ) -> FrontmostAccessibilitySnapshot {
+        let displayedWindowTitle = windowTitle.isEmpty ? "(untitled)" : windowTitle
+        let truncationSuffix = traversal.wasTruncated ? " (truncated)" : ""
+        let header = [
+            "Application: \(applicationName)",
+            "Bundle Identifier: \(bundleIdentifier)",
+            "PID: \(processIdentifier)",
+            "Window: \(displayedWindowTitle)",
+            "AX Nodes: \(traversal.nodeCount)\(truncationSuffix)",
+            "Accessibility Tree:"
+        ]
+        return FrontmostAccessibilitySnapshot(
+            applicationName: applicationName,
+            bundleIdentifier: bundleIdentifier,
+            processIdentifier: processIdentifier,
+            windowTitle: windowTitle,
+            accessibilityText: (header + [traversal.text]).joined(separator: "\n"),
+            nodeCount: traversal.nodeCount,
+            wasTruncated: traversal.wasTruncated,
+            durationMilliseconds: durationMilliseconds,
+            windowElement: windowElement
+        )
+    }
+}
+
+public struct FrontmostAccessibilitySnapshot: @unchecked Sendable {
     public let applicationName: String
     public let bundleIdentifier: String
     public let processIdentifier: pid_t
@@ -64,6 +113,19 @@ public final class FrontmostAccessibilitySnapshotProvider {
     ) throws -> FrontmostAccessibilitySnapshot {
         let startedAt = CFAbsoluteTimeGetCurrent()
 
+        let selection = try locateWindow(
+            requestedBundleIdentifier: requestedBundleIdentifier
+        )
+        return capture(
+            selection: selection,
+            startedAt: startedAt
+        )
+    }
+
+    public func locateWindow(
+        requestedBundleIdentifier: String
+    ) throws -> FrontmostAccessibilityWindowSelection {
+
         guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
             throw FrontmostAccessibilitySnapshotError.frontmostApplicationUnavailable
         }
@@ -96,41 +158,46 @@ public final class FrontmostAccessibilitySnapshotProvider {
             )
         }
 
-        let traversal = AccessibilityTreeTraversal<AXUIElement>(
-            maximumDepth: maximumDepth,
-            maximumNodeCount: maximumNodeCount,
-            snapshot: { [self] element in treeNode(for: element) }
-        )
-        let result = traversal.render(root: window)
         let applicationName = frontmostApplication.localizedName ?? requestedBundleIdentifier
         let windowTitle = stringValue(
             of: window,
             attribute: kAXTitleAttribute as CFString
         ) ?? ""
-        let durationMilliseconds = Int(
-            ((CFAbsoluteTimeGetCurrent() - startedAt) * 1_000).rounded()
-        )
-        let displayedWindowTitle = windowTitle.isEmpty ? "(untitled)" : windowTitle
-        let truncationSuffix = result.wasTruncated ? " (truncated)" : ""
-        let header = [
-            "Application: \(applicationName)",
-            "Bundle Identifier: \(requestedBundleIdentifier)",
-            "PID: \(processIdentifier)",
-            "Window: \(displayedWindowTitle)",
-            "AX Nodes: \(result.nodeCount)\(truncationSuffix)",
-            "Accessibility Tree:"
-        ]
-
-        return FrontmostAccessibilitySnapshot(
+        return FrontmostAccessibilityWindowSelection(
             applicationName: applicationName,
             bundleIdentifier: requestedBundleIdentifier,
             processIdentifier: processIdentifier,
             windowTitle: windowTitle,
-            accessibilityText: (header + [result.text]).joined(separator: "\n"),
-            nodeCount: result.nodeCount,
-            wasTruncated: result.wasTruncated,
-            durationMilliseconds: durationMilliseconds,
             windowElement: window
+        )
+    }
+
+    public func capture(
+        selection: FrontmostAccessibilityWindowSelection
+    ) -> FrontmostAccessibilitySnapshot {
+        capture(
+            selection: selection,
+            startedAt: CFAbsoluteTimeGetCurrent()
+        )
+    }
+
+    private func capture(
+        selection: FrontmostAccessibilityWindowSelection,
+        startedAt: CFAbsoluteTime
+    ) -> FrontmostAccessibilitySnapshot {
+
+        let traversal = AccessibilityTreeTraversal<AXUIElement>(
+            maximumDepth: maximumDepth,
+            maximumNodeCount: maximumNodeCount,
+            snapshot: { [self] element in treeNode(for: element) }
+        )
+        let result = traversal.render(root: selection.windowElement)
+        let durationMilliseconds = Int(
+            ((CFAbsoluteTimeGetCurrent() - startedAt) * 1_000).rounded()
+        )
+        return selection.snapshot(
+            traversal: result,
+            durationMilliseconds: durationMilliseconds
         )
     }
 
