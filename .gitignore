@@ -7,3 +7,28 @@ dist/
 
 # Web-research and diagnostic scrape artifacts
 .firecrawl/
+
+# Original licensed sound, supplied locally for research; never commit it.
+.local-resources/
+.DS_Store
+
+# Research artifacts / secrets
+research/**/*.zip
+research/**/*.zip.part
+research/**/*.app/
+research/**/*.dmg
+research/**/*.pkg
+research/**/*.xip
+research/**/*.p12
+research/**/*.pfx
+research/**/*.pem
+research/**/*.key
+research/**/*.cer
+research/**/*.mobileprovision
+research/**/analysis/
+research/**/x86-samples/
+
+# Local / test output
+*.xcresult
+.env
+.env.*
