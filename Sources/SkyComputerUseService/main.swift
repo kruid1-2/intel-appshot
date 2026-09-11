@@ -107,7 +107,11 @@ let captureDirectory = FileManager.default.temporaryDirectory
 
 let accessibilityProvider = FrontmostAccessibilitySnapshotProvider()
 let screenshotProvider = FrontmostWindowScreenshotProvider()
-let magicMoveCoordinator = AppshotMagicMoveCoordinator()
+// Only the locally adapted Composer understands exterior-shadow canvas geometry.
+// Stock sessions retain their original transition image sizing contract.
+let magicMoveCoordinator = AppshotMagicMoveCoordinator(
+    preservesExteriorShadow: ProcessInfo.processInfo.environment["APPSHOT_TRANSITION_LAYOUT"] == "1"
+)
 let accessibilityQueue = DispatchQueue(
     label: "com.openai.sky.CUAService.appshot.accessibility",
     qos: .userInitiated
@@ -282,6 +286,9 @@ let protocolProbe = AppshotProtocolProbe { (request: AppshotCaptureRequest) in
                 + "imageAndPNGMs=\(screenshot.imageCaptureDurationMilliseconds) "
                 + "totalMs=\(screenshot.totalDurationMilliseconds)"
         )
+        // Source identity, CGImage, AX, and artifacts are now fixed. Schedule the
+        // one-shot host activation without blocking this start reply or its updates.
+        startedMove?.startWhenHostIsReady(.codex(), requestID: request.requestID)
         return AppshotCapturePayload(
             screenshotURL: screenshot.screenshotURL,
             accessibilityText: snapshot.accessibilityText,

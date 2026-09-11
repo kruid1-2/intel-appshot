@@ -1714,6 +1714,10 @@ build_authoritative_bundle() {
   /bin/chmod +x "$authoritative_binary"
   create_info_plist "$AUTHORITATIVE_APP"
   create_build_identity "$AUTHORITATIVE_APP"
+  # Optional local original resource. No copyrighted sound is stored in Git.
+  if [[ -f "$ROOT_DIR/.local-resources/Appshot.wav" ]]; then
+    /bin/cp "$ROOT_DIR/.local-resources/Appshot.wav" "$authoritative_contents/Resources/Appshot.wav"
+  fi
   if ! "$XATTR_TOOL" -cr "$AUTHORITATIVE_APP"; then
     printf 'authoritative bundle: xattr cleanup failed before signing\n' >&2
     return 1

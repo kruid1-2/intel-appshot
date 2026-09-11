@@ -38,10 +38,21 @@ final class AppshotMagicMoveOverlayWindow: NSWindow {
 private struct AppshotTransitionSnapshotPixels: @unchecked Sendable {
     let image: CGImage
     let transitionSnapshotHeight: Double
+    let contentFrameInPixels: CGRect?
 }
 
 @MainActor
 public final class AppshotMagicMoveController {
+    private static let shadowRadius: CGFloat = 18
+    private static let shadowOffset = CGSize(width: 0, height: -5)
+    // Original ARM: appshotShutterFadeIn (easeInOut, 0.15), followed by
+    // appshotShutterFadeOut / appshotSnapshotFadeIn (easeIn, default 0.125).
+    private static let shutterFadeInDuration: Double = 0.15
+    private static let snapshotTakeoverDuration: Double = 0.125
+    // Leave transparent pixels beyond the shadow's visible raster support.
+    private static var shadowPadding: CGFloat {
+        ceil(3 * shadowRadius + max(abs(shadowOffset.width), abs(shadowOffset.height)))
+    }
     public private(set) var transitionSnapshot: AppshotTransitionSnapshotArtifact
     public let spring: AppshotMagicMoveSpring
     public let sourceFrame: CGRect
@@ -49,8 +60,11 @@ public final class AppshotMagicMoveController {
 
     private let overlayWindow: AppshotMagicMoveOverlayWindow
     private let rootLayer: CALayer
+    private let snapshotEffectsLayer: CALayer
+    private let snapshotMaskLayer: CAGradientLayer
     private let cardLayer: CALayer
     private let screenshotLayer: CALayer
+    private let shutterLayer: CALayer
     private let iconLayer: CALayer
     private let titleLayer: CATextLayer
     private let sourceCardFrame: CGRect
@@ -62,6 +76,8 @@ public final class AppshotMagicMoveController {
     private var lifecycle = AppshotMagicMoveLifecycle()
     private var animationHasStarted = false
     private var didClose = false
+    private var activationTask: Task<Void, Never>?
+    private var activationRequestID = "unstarted"
 
     public static func prepare(
         screenshotURL: URL,
@@ -71,7 +87,6 @@ public final class AppshotMagicMoveController {
         animationTarget: AppshotAnimationTarget,
         transitionSnapshotURL: URL,
         primaryDisplayHeight: CGFloat = CGDisplayBounds(CGMainDisplayID()).height,
-        showOverlay: Bool = true,
         closeHandler: (() -> Void)? = nil
     ) throws -> AppshotMagicMoveController {
         guard screenshotURL.standardizedFileURL
@@ -90,7 +105,6 @@ public final class AppshotMagicMoveController {
             animationTarget: animationTarget,
             transitionSnapshotURL: transitionSnapshotURL,
             primaryDisplayHeight: primaryDisplayHeight,
-            showOverlay: showOverlay,
             closeHandler: closeHandler
         )
     }
@@ -103,7 +117,6 @@ public final class AppshotMagicMoveController {
         animationTarget: AppshotAnimationTarget,
         transitionSnapshotURL: URL,
         primaryDisplayHeight: CGFloat = CGDisplayBounds(CGMainDisplayID()).height,
-        showOverlay: Bool = true,
         closeHandler: (() -> Void)? = nil
     ) throws -> AppshotMagicMoveController {
         var iconRect = CGRect(origin: .zero, size: applicationIcon.size)
@@ -122,7 +135,6 @@ public final class AppshotMagicMoveController {
             animationTarget: animationTarget,
             transitionSnapshotURL: transitionSnapshotURL,
             primaryDisplayHeight: primaryDisplayHeight,
-            showOverlay: showOverlay,
             closeHandler: closeHandler
         )
     }
@@ -135,7 +147,7 @@ public final class AppshotMagicMoveController {
         animationTarget: AppshotAnimationTarget,
         transitionSnapshotURL: URL,
         primaryDisplayHeight: CGFloat = CGDisplayBounds(CGMainDisplayID()).height,
-        showOverlay: Bool = true,
+        preservesExteriorShadow: Bool = false,
         closeHandler: (() -> Void)? = nil
     ) throws -> AppshotMagicMoveController {
         try AppshotMagicMoveController(
@@ -146,7 +158,7 @@ public final class AppshotMagicMoveController {
             animationTarget: animationTarget,
             transitionSnapshotURL: transitionSnapshotURL,
             primaryDisplayHeight: primaryDisplayHeight,
-            showOverlay: showOverlay,
+            preservesExteriorShadow: preservesExteriorShadow,
             closeHandler: closeHandler
         )
     }
@@ -159,7 +171,7 @@ public final class AppshotMagicMoveController {
         animationTarget: AppshotAnimationTarget,
         transitionSnapshotURL: URL,
         primaryDisplayHeight: CGFloat,
-        showOverlay: Bool,
+        preservesExteriorShadow: Bool,
         closeHandler: (() -> Void)?
     ) throws {
         let destinationFrame = animationTarget.destinationFrame
@@ -200,7 +212,7 @@ public final class AppshotMagicMoveController {
         let overlayFrame = AppshotMagicMoveGeometry.fixedOverlayFrame(
             sourceFrame: sourceAppKitFrame,
             destinationOuterFrame: destinationOuterAppKitFrame
-        )
+        ).insetBy(dx: -Self.shadowPadding, dy: -Self.shadowPadding)
         sourceCardFrame = AppshotMagicMoveGeometry.localFrame(
             sourceAppKitFrame,
             in: overlayFrame
@@ -226,20 +238,40 @@ public final class AppshotMagicMoveController {
         overlayWindow.contentView = contentView
         self.rootLayer = rootLayer
 
+        // Mask the image, backing and shadow together. Accessories remain siblings
+        // so the exported terminal PNG keeps its icon and title fully legible.
+        snapshotEffectsLayer = CALayer()
+        snapshotEffectsLayer.frame = rootLayer.bounds
+        rootLayer.addSublayer(snapshotEffectsLayer)
+        snapshotMaskLayer = CAGradientLayer()
+        snapshotMaskLayer.frame = rootLayer.bounds
+        snapshotMaskLayer.contentsScale = animationTarget.displayScaleFactor
+        snapshotMaskLayer.locations = [0, 0.5, 0.75, 0.95, 1]
+        snapshotEffectsLayer.mask = snapshotMaskLayer
+
         cardLayer = CALayer()
+        // Fixed shadow container: derive the shadow from the screenshot's alpha,
+        // not an opaque rectangle. render(in:) also preserves this child shadow.
+        cardLayer.frame = rootLayer.bounds
         cardLayer.masksToBounds = false
         cardLayer.shadowColor = NSColor.black.cgColor
         cardLayer.shadowOpacity = 0.22
-        cardLayer.shadowRadius = 18
-        cardLayer.shadowOffset = CGSize(width: 0, height: -5)
-        rootLayer.addSublayer(cardLayer)
+        cardLayer.shadowRadius = Self.shadowRadius
+        cardLayer.shadowOffset = Self.shadowOffset
+        snapshotEffectsLayer.addSublayer(cardLayer)
 
         screenshotLayer = CALayer()
         screenshotLayer.contents = screenshotImage
         screenshotLayer.contentsGravity = .resizeAspect
         screenshotLayer.masksToBounds = true
         screenshotLayer.contentsScale = animationTarget.displayScaleFactor
-        rootLayer.addSublayer(screenshotLayer)
+        cardLayer.addSublayer(screenshotLayer)
+
+        shutterLayer = CALayer()
+        shutterLayer.name = "appshot.shutter"
+        shutterLayer.backgroundColor = NSColor.white.cgColor
+        shutterLayer.masksToBounds = true
+        rootLayer.addSublayer(shutterLayer)
 
         iconLayer = CALayer()
         iconLayer.contents = applicationIconImage
@@ -261,20 +293,12 @@ public final class AppshotMagicMoveController {
         titleLayer.needsDisplayOnBoundsChange = false
         rootLayer.addSublayer(titleLayer)
 
-        let backgroundColor = Self.cgColor(
-            animationTarget.destinationBackgroundColor,
-            fallback: .clear
-        )
-        cardLayer.backgroundColor = backgroundColor
+        // A solid destination-colored backing leaks through aspect-fit margins
+        // and the screenshot's antialiased edges. Cast only a shadow, no fill.
+        cardLayer.backgroundColor = nil
 
         Self.withoutImplicitAnimations {
             self.configureInitialState()
-        }
-
-        if showOverlay {
-            overlayWindow.orderFrontRegardless()
-            overlayWindow.displayIfNeeded()
-            CATransaction.flush()
         }
 
         CATransaction.begin()
@@ -284,15 +308,13 @@ public final class AppshotMagicMoveController {
         do {
             terminalPixels = try Self.renderTerminalSnapshotPixels(
                 rootLayer: rootLayer,
-                cropFrame: destinationOuterFrame,
+                contentFrame: destinationOuterFrame,
+                preservesExteriorShadow: preservesExteriorShadow,
                 displayScaleFactor: animationTarget.displayScaleFactor
             )
         } catch {
             configureInitialState()
             CATransaction.commit()
-            if showOverlay {
-                overlayWindow.orderOut(nil)
-            }
             throw error
         }
         configureInitialState()
@@ -304,20 +326,64 @@ public final class AppshotMagicMoveController {
                 destinationURL: transitionSnapshotURL
             )
         }
-        if showOverlay {
-            startAnimation()
+        // Preparation has no visible side effects. The source pixels and terminal
+        // artifact are ready before a separate foreground gate permits presentation.
+        transitionSnapshot = try transitionSnapshotWork.wait()
+    }
+
+    public func startWhenHostIsReady(_ host: AppshotHostActivation?, requestID: String) {
+        guard activationTask == nil, !animationHasStarted, !didClose else { return }
+        activationRequestID = UUID(uuidString: requestID)?.uuidString ?? "non-uuid"
+        guard let host else {
+            AppshotActivationLog.logger.info("activation-unavailable; retaining screenshot-only handoff")
+            cancel()
+            return
         }
-        do {
-            transitionSnapshot = try transitionSnapshotWork.wait()
-        } catch {
-            if showOverlay {
-                overlayWindow.orderOut(nil)
+        activationTask = Task { @MainActor [weak self] in
+            guard let self, !self.didClose, !Task.isCancelled else { return }
+            await self.presentShutter()
+            guard !self.didClose, !Task.isCancelled else { return }
+            let result = await host.waitUntilFrontmost()
+            guard !self.didClose, !Task.isCancelled else { return }
+            self.activationTask = nil
+            guard result == .ready, host.isFrontmost() else {
+                AppshotActivationLog.logger.info("activation-fallback result=\(result.rawValue, privacy: .public)")
+                self.cancel()
+                return
             }
-            throw error
+            AppshotActivationLog.logger.info("host-frontmost request=\(self.activationRequestID, privacy: .public)")
+            self.startAnimation()
         }
     }
 
+    private func presentShutter() async {
+        AppshotCaptureSound.shared.playIfEnabled()
+        // Composer may activate independently while the flash is rising. Keep
+        // an exact source-aligned replica under it, so that switch cannot expose
+        // a different app through a partially transparent shutter. No flight yet.
+        Self.withoutImplicitAnimations { snapshotEffectsLayer.opacity = 1 }
+        overlayWindow.orderFrontRegardless()
+        overlayWindow.displayIfNeeded()
+        CATransaction.flush()
+        AppshotActivationLog.logger.info("shutter-shown request=\(self.activationRequestID, privacy: .public)")
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            CATransaction.setCompletionBlock { continuation.resume() }
+            shutterLayer.opacity = 1
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.toValue = 1
+            fade.duration = Self.shutterFadeInDuration
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            shutterLayer.add(fade, forKey: "appshotShutterFadeIn")
+            CATransaction.commit()
+        }
+        AppshotActivationLog.logger.info("shutter-peak request=\(self.activationRequestID, privacy: .public)")
+    }
+
     public func markComposerHandoffFinished() {
+        AppshotActivationLog.logger.info("composer-handoff request=\(self.activationRequestID, privacy: .public)")
         if lifecycle.markComposerHandoffFinished() {
             closeOverlay()
         }
@@ -342,15 +408,36 @@ public final class AppshotMagicMoveController {
 
         configureTerminalState()
         addFrameAnimations(
-            to: cardLayer,
-            from: sourceCardFrame,
-            to: destinationCardFrame
-        )
-        addFrameAnimations(
             to: screenshotLayer,
             from: sourceCardFrame,
             to: destinationCardFrame
         )
+        addFrameAnimations(to: shutterLayer, from: sourceCardFrame, to: destinationCardFrame)
+        // These animations and geometry start in the same transaction, on the
+        // same persistent layers. There is no overlay replacement at the cut.
+        let shutterFade = CABasicAnimation(keyPath: "opacity")
+        shutterFade.fromValue = 1
+        shutterFade.toValue = 0
+        shutterFade.duration = Self.snapshotTakeoverDuration
+        shutterFade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        shutterLayer.add(shutterFade, forKey: "appshotShutterFadeOut")
+        let snapshotFade = CABasicAnimation(keyPath: "opacity")
+        snapshotFade.fromValue = 0
+        snapshotFade.toValue = 1
+        snapshotFade.duration = Self.snapshotTakeoverDuration
+        snapshotFade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        snapshotEffectsLayer.add(snapshotFade, forKey: "appshotSnapshotFadeIn")
+
+        // The final mask is already set under the opaque shutter. Only its
+        // coordinates follow the screenshot; do not animate the fade's formation.
+        for (keyPath, isTop) in [("startPoint", true), ("endPoint", false)] {
+            addSpringAnimation(
+                to: snapshotMaskLayer,
+                keyPath: keyPath,
+                fromValue: NSValue(point: maskPoint(for: sourceCardFrame, isTop: isTop)),
+                toValue: NSValue(point: maskPoint(for: destinationCardFrame, isTop: isTop))
+            )
+        }
 
         addSpringAnimation(
             to: iconLayer,
@@ -367,6 +454,7 @@ public final class AppshotMagicMoveController {
         iconLayer.add(accessoryOpacityAnimation(), forKey: "magicMove.opacity")
         titleLayer.add(accessoryOpacityAnimation(), forKey: "magicMove.opacity")
         CATransaction.commit()
+        AppshotActivationLog.logger.info("magic-move-committed request=\(self.activationRequestID, privacy: .public)")
     }
 
     private func animationDidFinish() {
@@ -377,9 +465,15 @@ public final class AppshotMagicMoveController {
     }
 
     private func configureInitialState() {
-        Self.setFrame(sourceCardFrame, on: cardLayer)
+        snapshotEffectsLayer.opacity = 0
+        // During shutter, only the source pixels cover the real window. Its
+        // existing system shadow must not be doubled by the destination backing.
+        cardLayer.shadowOpacity = 0
+        Self.setFrame(sourceCardFrame, on: shutterLayer)
+        shutterLayer.cornerRadius = 10
+        shutterLayer.opacity = 0
+        configureSnapshotMask(for: sourceCardFrame, faded: false)
         Self.setFrame(sourceCardFrame, on: screenshotLayer)
-        cardLayer.cornerRadius = 10
         screenshotLayer.cornerRadius = 10
 
         let iconSize = AppshotTransitionSnapshotRenderer.iconSize * destinationScale
@@ -393,9 +487,13 @@ public final class AppshotMagicMoveController {
     }
 
     private func configureTerminalState() {
-        Self.setFrame(destinationCardFrame, on: cardLayer)
+        snapshotEffectsLayer.opacity = 1
+        cardLayer.shadowOpacity = 0.22
+        Self.setFrame(destinationCardFrame, on: shutterLayer)
+        shutterLayer.cornerRadius = destinationCornerRadius
+        shutterLayer.opacity = 0
+        configureSnapshotMask(for: destinationCardFrame, faded: true)
         Self.setFrame(destinationCardFrame, on: screenshotLayer)
-        cardLayer.cornerRadius = destinationCornerRadius
         screenshotLayer.cornerRadius = destinationCornerRadius
 
         let iconSize = AppshotTransitionSnapshotRenderer.iconSize * destinationScale
@@ -406,6 +504,24 @@ public final class AppshotMagicMoveController {
         configureTitleBounds()
         titleLayer.position = titlePosition(for: destinationCardFrame)
         titleLayer.opacity = 1
+    }
+
+    private func maskColors(faded: Bool) -> [CGColor] {
+        // Original-style lower-half fade, not a claim of pixel-exact ARM stops.
+        let alphas: [CGFloat] = faded ? [1, 1, 0.5, 0, 0] : [1, 1, 1, 1, 1]
+        return alphas.map { CGColor(gray: 1, alpha: $0) }
+    }
+
+    private func maskPoint(for frame: CGRect, isTop: Bool) -> CGPoint {
+        CGPoint(x: 0.5, y: (isTop ? frame.maxY : frame.minY) / rootLayer.bounds.height)
+    }
+
+    private func configureSnapshotMask(for frame: CGRect, faded: Bool) {
+        // A full-overlay mask preserves top/side shadow support. The gradient
+        // extends transparent below the body instead of exposing an unmasked shadow.
+        snapshotMaskLayer.startPoint = maskPoint(for: frame, isTop: true)
+        snapshotMaskLayer.endPoint = maskPoint(for: frame, isTop: false)
+        snapshotMaskLayer.colors = maskColors(faded: faded)
     }
 
     private func configureTitleBounds() {
@@ -492,20 +608,29 @@ public final class AppshotMagicMoveController {
     private func closeOverlay() {
         guard !didClose else { return }
         didClose = true
+        activationTask?.cancel()
+        activationTask = nil
         rootLayer.removeAllAnimations()
+        snapshotEffectsLayer.removeAllAnimations()
+        shutterLayer.removeAllAnimations()
+        snapshotMaskLayer.removeAllAnimations()
         cardLayer.removeAllAnimations()
         screenshotLayer.removeAllAnimations()
         iconLayer.removeAllAnimations()
         titleLayer.removeAllAnimations()
         overlayWindow.orderOut(nil)
+        AppshotActivationLog.logger.info("overlay-closed request=\(self.activationRequestID, privacy: .public)")
         closeHandler?()
     }
 
     private static func renderTerminalSnapshotPixels(
         rootLayer: CALayer,
-        cropFrame: CGRect,
+        contentFrame: CGRect,
+        preservesExteriorShadow: Bool,
         displayScaleFactor: Double
     ) throws -> AppshotTransitionSnapshotPixels {
+        let padding = preservesExteriorShadow ? shadowPadding : 0
+        let cropFrame = contentFrame.insetBy(dx: -padding, dy: -padding)
         let pixelsWide = Int((cropFrame.width * displayScaleFactor).rounded())
         let pixelsHigh = Int((cropFrame.height * displayScaleFactor).rounded())
         guard
@@ -542,7 +667,15 @@ public final class AppshotMagicMoveController {
         }
         return AppshotTransitionSnapshotPixels(
             image: image,
-            transitionSnapshotHeight: cropFrame.height
+            transitionSnapshotHeight: contentFrame.height,
+            contentFrameInPixels: preservesExteriorShadow ? CGRect(
+                x: (contentFrame.minX - cropFrame.minX) * displayScaleFactor,
+                // The PNG has a top-left origin. Account for pixel-height rounding
+                // here so fractional display/UI scales do not introduce a half-pixel jump.
+                y: CGFloat(pixelsHigh) - (contentFrame.maxY - cropFrame.minY) * displayScaleFactor,
+                width: contentFrame.width * displayScaleFactor,
+                height: contentFrame.height * displayScaleFactor
+            ) : nil
         )
     }
 
@@ -550,9 +683,17 @@ public final class AppshotMagicMoveController {
         _ pixels: AppshotTransitionSnapshotPixels,
         destinationURL: URL
     ) throws -> AppshotTransitionSnapshotArtifact {
+        let description = try pixels.contentFrameInPixels.map { frame in
+            let layout = try JSONSerialization.data(withJSONObject: [
+                "x": frame.minX, "y": frame.minY,
+                "width": frame.width, "height": frame.height
+            ], options: [.sortedKeys])
+            return "codex-appshot-layout-v1:" + String(decoding: layout, as: UTF8.self)
+        }
         try WindowScreenshotPNGWriter.write(
             image: pixels.image,
-            to: destinationURL
+            to: destinationURL,
+            pngDescription: description
         )
         return AppshotTransitionSnapshotArtifact(
             url: destinationURL,
@@ -598,8 +739,11 @@ public final class AppshotMagicMoveController {
 @MainActor
 public final class AppshotMagicMoveCoordinator {
     private var activeMoves: [String: AppshotMagicMoveController] = [:]
+    private let preservesExteriorShadow: Bool
 
-    public init() {}
+    public init(preservesExteriorShadow: Bool = false) {
+        self.preservesExteriorShadow = preservesExteriorShadow
+    }
 
     public func start(
         requestID: String,
@@ -678,6 +822,7 @@ public final class AppshotMagicMoveCoordinator {
             title: title,
             animationTarget: animationTarget,
             transitionSnapshotURL: transitionSnapshotURL,
+            preservesExteriorShadow: preservesExteriorShadow,
             closeHandler: { [weak self] in
                 self?.activeMoves.removeValue(forKey: requestID)
             }

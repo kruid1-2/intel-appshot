@@ -174,12 +174,10 @@ public final class FrontmostWindowScreenshotProvider {
         let window = shareableContent.windows[matchingIndex]
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let contentInfo = SCShareableContent.info(for: filter)
-        let configuration = SCStreamConfiguration()
-        let scale = max(CGFloat(contentInfo.pointPixelScale), 1)
-        configuration.width = max(Int(ceil(contentInfo.contentRect.width * scale)), 1)
-        configuration.height = max(Int(ceil(contentInfo.contentRect.height * scale)), 1)
-        configuration.showsCursor = false
-        configuration.ignoreShadowsSingleWindow = false
+        let configuration = Self.windowBodyConfiguration(
+            contentRect: contentInfo.contentRect,
+            pointPixelScale: CGFloat(contentInfo.pointPixelScale)
+        )
 
         let imageCaptureStartedAt = CFAbsoluteTimeGetCurrent()
         let image = try captureImage(filter: filter, configuration: configuration)
@@ -195,6 +193,23 @@ public final class FrontmostWindowScreenshotProvider {
             imageCaptureDurationMilliseconds: imageCaptureDuration,
             totalDurationMilliseconds: milliseconds(since: startedAt)
         )
+    }
+
+    @available(macOS 14.0, *)
+    static func windowBodyConfiguration(
+        contentRect: CGRect,
+        pointPixelScale: CGFloat
+    ) -> SCStreamConfiguration {
+        let configuration = SCStreamConfiguration()
+        let scale = max(pointPixelScale, 1)
+        configuration.width = max(Int(ceil(contentRect.width * scale)), 1)
+        configuration.height = max(Int(ceil(contentRect.height * scale)), 1)
+        configuration.showsCursor = false
+        // The bitmap must describe window.frame itself. ScreenCaptureKit otherwise
+        // fits shadow padding into these same pixel dimensions, shrinking the body.
+        // MagicMove owns the separate visual shadow.
+        configuration.ignoreShadowsSingleWindow = true
+        return configuration
     }
 
     @available(macOS 14.0, *)

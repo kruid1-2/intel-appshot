@@ -9,7 +9,7 @@ enum WindowScreenshotPNGWriterError: Error {
 }
 
 enum WindowScreenshotPNGWriter {
-    static func write(image: CGImage, to destination: URL) throws {
+    static func write(image: CGImage, to destination: URL, pngDescription: String? = nil) throws {
         try FileManager.default.createDirectory(
             at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -22,7 +22,10 @@ enum WindowScreenshotPNGWriter {
         ) else {
             throw WindowScreenshotPNGWriterError.destinationCreationFailed
         }
-        CGImageDestinationAddImage(imageDestination, image, nil)
+        let properties = pngDescription.map {
+            [kCGImagePropertyPNGDictionary: [kCGImagePropertyPNGDescription: $0]] as CFDictionary
+        }
+        CGImageDestinationAddImage(imageDestination, image, properties)
         guard CGImageDestinationFinalize(imageDestination) else {
             throw WindowScreenshotPNGWriterError.pngEncodingFailed
         }
