@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 final class IsolatedWorkflowFixture {
+    let repositoryRoot: URL
     let root: URL
     let toolsDirectory: URL
     let scriptURL: URL
@@ -23,7 +24,7 @@ final class IsolatedWorkflowFixture {
     let xattrLog: URL
 
     init() throws {
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
+        repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -75,11 +76,11 @@ elif [[ "${CODEX_CU_FAKE_IDENTITY_MODE:-valid}" == "wrong-fingerprint" ]]; then
   printf '  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Codex Computer Use Local Development"\n'
   printf '     1 valid identities found\n'
 elif [[ "${CODEX_CU_FAKE_IDENTITY_MODE:-valid}" == "duplicate" ]]; then
-  printf '  1) 7B958AD0A1A95B41F8F78C307FC0AA4651D08807 "Codex Computer Use Local Development"\n'
+  printf '  1) 1111111111111111111111111111111111111111 "Codex Computer Use Local Development"\n'
   printf '  2) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Codex Computer Use Local Development"\n'
   printf '     2 valid identities found\n'
 else
-  printf '  1) 7B958AD0A1A95B41F8F78C307FC0AA4651D08807 "Codex Computer Use Local Development"\n'
+  printf '  1) 1111111111111111111111111111111111111111 "Codex Computer Use Local Development"\n'
   printf '     1 valid identities found\n'
 fi
 """#
@@ -510,7 +511,7 @@ fi
 
 if [[ " $* " == *" -d -r- "* ]]; then
   printf 'Executable=%s\n' "$bundle/Contents/MacOS/SkyComputerUseService"
-  printf '%s\n' "${CODEX_CU_FAKE_DESIGNATED_REQUIREMENT:-designated => identifier \"com.openai.sky.CUAService\" and certificate leaf = H\"7b958ad0a1a95b41f8f78c307fc0aa4651d08807\"}"
+  printf '%s\n' "${CODEX_CU_FAKE_DESIGNATED_REQUIREMENT:-designated => identifier \"com.openai.sky.CUAService\" and certificate leaf = H\"1111111111111111111111111111111111111111\"}"
   exit 0
 fi
 
@@ -771,7 +772,11 @@ func workflowTestModeConfinesGeneratedPathsToFixtureRoot() throws {
             "/\(fixture.root.lastPathComponent)/staging/codex-cu-workflow."
         )
     )
-    #expect(!loggedPaths.contains("/Users/a66/Documents/ChatGPT/智能快照/dist"))
+    #expect(
+        !loggedPaths.contains(
+            fixture.repositoryRoot.appendingPathComponent("dist").path
+        )
+    )
 }
 
 @Test("build signs and verifies without stopping a running Helper")
@@ -821,19 +826,39 @@ func buildRejectsNonX8664Architecture() throws {
     #expect(!FileManager.default.fileExists(atPath: fixture.distApp.path))
 }
 
-@Test("build rejects the stable identity label when its certificate fingerprint changed")
-func buildRejectsUnexpectedSigningFingerprint() throws {
+@Test("build accepts the unique local signing identity without a maintainer fingerprint")
+func buildAcceptsUniqueLocalSigningIdentity() throws {
+    let fixture = try IsolatedWorkflowFixture()
+    let fingerprint = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+    let result = try fixture.run(
+        ["--build"],
+        environment: [
+            "CODEX_CU_FAKE_IDENTITY_MODE": "wrong-fingerprint",
+            "CODEX_CU_FAKE_DESIGNATED_REQUIREMENT": "designated => identifier \"com.openai.sky.CUAService\" and certificate leaf = H\"\(fingerprint.lowercased())\"",
+        ]
+    )
+
+    #expect(result.status == 0)
+    #expect(FileManager.default.fileExists(atPath: fixture.distApp.path))
+}
+
+@Test("build rejects a local signing identity that differs from an explicit fingerprint pin")
+func buildRejectsUnexpectedPinnedSigningFingerprint() throws {
     let fixture = try IsolatedWorkflowFixture()
 
     let result = try fixture.run(
         ["--build"],
-        environment: ["CODEX_CU_FAKE_IDENTITY_MODE": "wrong-fingerprint"]
+        environment: [
+            "CODEX_CU_FAKE_IDENTITY_MODE": "wrong-fingerprint",
+            "CODEX_COMPUTER_USE_SIGNING_IDENTITY_SHA1": "1111111111111111111111111111111111111111",
+        ]
     )
 
     #expect(result.status != 0)
     #expect(
         result.stderr.contains(
-            "signing identity fingerprint mismatch: expected 7B958AD0A1A95B41F8F78C307FC0AA4651D08807, got AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "signing identity fingerprint mismatch: expected 1111111111111111111111111111111111111111, got AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         )
     )
 }

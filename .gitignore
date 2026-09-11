@@ -28,6 +28,23 @@ research/**/*.mobileprovision
 research/**/analysis/
 research/**/x86-samples/
 
+# Never publish packaged apps, archives, or signing material
+*.app/
+*.zip
+*.zip.part
+*.dmg
+*.pkg
+*.xip
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+*.der
+*.mobileprovision
+*.provisionprofile
+
 # Local / test output
 *.xcresult
 .env

@@ -14,8 +14,9 @@ Read-only original ARM Helper 26.825.51511:
   (`0x100ed3428`–`0x100ed35b0`).
 - `appshotAppIconFadeIn` and `appshotTitleFadeIn` are separate animations.
 
-Evidence file: `/private/tmp/appshot-activation.t75k5F/annotated-original-appshot-lldb.txt`.
-This establishes layer/timing behavior, not a pixel-exact original reproduction.
+The raw local disassembly used for this check is intentionally not distributed.
+The recorded evidence establishes layer/timing behavior, not a pixel-exact original
+reproduction.
 
 ## Compatibility implementation
 
@@ -56,13 +57,11 @@ flight-only foreground gate. Slow activation may still lengthen the white hold.
   cancellation, magicMove and PNG tests: 21 passed in 6.300 s. The full workflow
   suite result above predates this two-line visibility guard; those workflows
   were not changed by it.
-- Canonical Helper installed from verified authoritative staging and started:
-  Build ID `04102FC5-6E2A-4815-BEBF-DE01751973F5`, PID 24669 at verification,
-  CDHash `9992a72a1d60235c145427e12bc33f5c617890ab`.
+- The canonical Helper was installed from verified authoritative staging and
+  started with matching build, signature, and executable identity.
 - Doctor: running executable matches installed, Accessibility and Screen
   Recording granted, `Overall: healthy`.
-- Official app.asar unchanged:
-  `3686dd51b09cce765e1c0404959ead0db62541dd20d53de9e56a80c8c41b007f`.
+- The official application and its app.asar were not modified.
 - User asked to physically trigger three times. No claim of visual acceptance
   until feedback; no injected hotkeys used as a substitute.
 

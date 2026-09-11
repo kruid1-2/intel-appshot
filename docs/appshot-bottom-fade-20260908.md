@@ -28,14 +28,13 @@ existing animation duration. No per-frame driver or screenshot rebuild was added
 - Existing terminal PNG size and padded exterior-shadow tests pass.
 - Full SwiftPM suite: 171 tests passed, zero failures (455.227 seconds).
 - Helper build and authoritative staging signature verification passed.
-- Installed and started canonical Helper, Build ID
-  `610B162C-50F9-4D08-A302-1373979C5DE5`, PID 9556 at validation.
-  Doctor reports `Overall: healthy`; Accessibility and Screen Recording granted.
+- The canonical Helper was installed and started through the verified workflow.
+  Doctor reported `Overall: healthy`; Accessibility and Screen Recording were granted.
 - A saved real Safari screenshot was rendered through the production controller,
   then inspected against light and dark backgrounds. Both show lower-half fade,
   no former bottom shadow band, and clear icon/title.
 - In the new Safari PNG, rows 270, 279, 280 and 281 at x=100 all have alpha 0.
-- Render evidence: `/private/tmp/appshot-fade-qa.62nWo0/`.
+- Local render artifacts were inspected and intentionally excluded from Git.
 - Physical double-Command / Composer acceptance is pending. Offscreen render
   evidence is not a claim of live handoff or animation verification.
 

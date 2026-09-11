@@ -47,22 +47,19 @@ changed in this task. Prior exterior-shadow/Composer work remains separately gat
 - Full `swift test --disable-sandbox`: **170 tests passed**, zero failures
   (737.525 seconds). Includes existing protocol and screenshot regressions.
 - `--install`: verified authoritative staging build and canonical installation.
-- Build ID: `B39BFCE0-634A-4DAE-86C2-7D7FE209266E`.
-- Helper CDHash: `45a2aa4584611d40c48834c344b424682514eb8b`.
-- Canonical process after restart: PID `65741`, executable vnode matches installed.
+- The generated Build Identity, local signature, and running executable vnode
+  matched the canonical installation after restart.
 - `--doctor`: Accessibility granted; Screen Recording granted; **Overall: healthy**.
 - Non-authoritative Documents `dist` reacquired FinderInfo, as previously documented;
   canonical strict signature remains valid and installation did not use that copy.
-- Official `/Applications/ChatGPT.app`: deep/strict verification passed, OpenAI
-  signature unchanged. `app.asar` SHA-256 before/after:
-  `3686dd51b09cce765e1c0404959ead0db62541dd20d53de9e56a80c8c41b007f`.
+- The installed official application retained its original signature and was not
+  modified by this work.
 - Independent review could not run due to its usage limit; no review approval claimed.
 
-Installation was performed while the prior Helper was running. Its old executable
-mapping moved to the installer's retired backup path. Before TERM, PID 34424 was
-rechecked against that exact path and launch time (2026-09-06 17:38:59); only that
-known retired instance was stopped. No foreign process was signalled. For subsequent
-installs, stop the canonical Helper before replacement to avoid this retired mapping.
+One validation covered replacement while a prior Helper was running. The old
+executable mapping was revalidated against the retired backup before TERM, and no
+foreign process was signalled. For subsequent installs, stop the canonical Helper
+before replacement to avoid a retired mapping.
 
 ## Physical acceptance still pending
 
@@ -77,4 +74,4 @@ host-frontmost, overlay-shown, magic-move-committed, then handoff/overlay closur
 These log markers describe API/state boundaries, not display-scanout timestamps.
 
 No Computer Use action, sound, spring tuning, official App modification, or official
-App re-signing is part of this change. No commit or push was performed.
+App re-signing is part of this change.

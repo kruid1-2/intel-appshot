@@ -86,9 +86,12 @@ PROCESS_NAME="SkyComputerUseService"
 BUNDLE_ID="com.openai.sky.CUAService"
 MIN_SYSTEM_VERSION="14.0"
 EXPECTED_SIGNING_IDENTITY="Codex Computer Use Local Development"
-EXPECTED_SIGNING_IDENTITY_SHA1="7B958AD0A1A95B41F8F78C307FC0AA4651D08807"
-EXPECTED_SIGNING_IDENTITY_SHA1_LOWER="7b958ad0a1a95b41f8f78c307fc0aa4651d08807"
 SIGNING_IDENTITY="${CODEX_COMPUTER_USE_SIGNING_IDENTITY:-$EXPECTED_SIGNING_IDENTITY}"
+PINNED_SIGNING_IDENTITY_SHA1="${CODEX_COMPUTER_USE_SIGNING_IDENTITY_SHA1:-}"
+EXPECTED_SIGNING_IDENTITY_SHA1=""
+EXPECTED_SIGNING_IDENTITY_SHA1_LOWER=""
+EXPLICIT_REQUIREMENT=""
+DESIGNATED_REQUIREMENT=""
 
 if [[ "$SIGNING_IDENTITY" != "$EXPECTED_SIGNING_IDENTITY" ]]; then
   printf 'configured signing identity mismatch: expected %s, got %s\n' \
@@ -115,8 +118,6 @@ if [[ "$WORKFLOW_TEST_MODE" -eq 1 ]]; then
   export CODEX_CU_FAKE_DIST_APP="$APP_BUNDLE"
   export CODEX_CU_FAKE_CANONICAL_APP="$INSTALLED_APP_BUNDLE"
 fi
-EXPLICIT_REQUIREMENT="identifier \"$BUNDLE_ID\" and certificate leaf = H\"$EXPECTED_SIGNING_IDENTITY_SHA1_LOWER\""
-DESIGNATED_REQUIREMENT="designated => $EXPLICIT_REQUIREMENT"
 WORKFLOW_ROOT=""
 AUTHORITATIVE_APP=""
 AUTHORITATIVE_BUILD_ID=""
@@ -191,12 +192,36 @@ resolve_signing_identity() {
 
   local actual_fingerprint
   actual_fingerprint="$(printf '%s' "$matches" | tr '[:lower:]' '[:upper:]')"
-  if [[ "$actual_fingerprint" != "$EXPECTED_SIGNING_IDENTITY_SHA1" ]]; then
-    printf 'signing identity fingerprint mismatch: expected %s, got %s\n' \
-      "$EXPECTED_SIGNING_IDENTITY_SHA1" "$actual_fingerprint" >&2
+  if [[ ! "$actual_fingerprint" =~ ^[0-9A-F]{40}$ ]]; then
+    printf 'signing identity fingerprint is malformed: %s\n' \
+      "$actual_fingerprint" >&2
     return 1
   fi
 
+  local pinned_fingerprint=""
+  if [[ -n "$PINNED_SIGNING_IDENTITY_SHA1" ]]; then
+    pinned_fingerprint="$(
+      printf '%s' "$PINNED_SIGNING_IDENTITY_SHA1" | tr '[:lower:]' '[:upper:]'
+    )"
+    if [[ ! "$pinned_fingerprint" =~ ^[0-9A-F]{40}$ ]]; then
+      printf 'configured signing identity fingerprint is malformed: %s\n' \
+        "$PINNED_SIGNING_IDENTITY_SHA1" >&2
+      return 1
+    fi
+  fi
+  if [[ -n "$pinned_fingerprint" \
+    && "$actual_fingerprint" != "$pinned_fingerprint" ]]; then
+    printf 'signing identity fingerprint mismatch: expected %s, got %s\n' \
+      "$pinned_fingerprint" "$actual_fingerprint" >&2
+    return 1
+  fi
+
+  EXPECTED_SIGNING_IDENTITY_SHA1="$actual_fingerprint"
+  EXPECTED_SIGNING_IDENTITY_SHA1_LOWER="$(
+    printf '%s' "$actual_fingerprint" | tr '[:upper:]' '[:lower:]'
+  )"
+  EXPLICIT_REQUIREMENT="identifier \"$BUNDLE_ID\" and certificate leaf = H\"$EXPECTED_SIGNING_IDENTITY_SHA1_LOWER\""
+  DESIGNATED_REQUIREMENT="designated => $EXPLICIT_REQUIREMENT"
   printf '%s\n' "$EXPECTED_SIGNING_IDENTITY_SHA1"
 }
 
@@ -1851,6 +1876,8 @@ install_authoritative_bundle() {
   /bin/rm -rf "$staging_root" "$backup_root"
   printf 'canonical install verified: %s\n' "$INSTALLED_APP_BUNDLE"
 }
+
+resolve_signing_identity >/dev/null
 
 case "$LIFECYCLE_MODE" in
   --start|start)
