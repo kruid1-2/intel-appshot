@@ -4,6 +4,10 @@
 
 > 一个非官方、社区维护的 macOS 兼容性项目，用于在 Intel / x86_64 Mac 上恢复 ChatGPT/Codex 桌面端的 Appshot（智能快照）捕获链路。
 
+- **适合谁：** 使用 Intel Mac，且桌面客户端仍提供 Appshot 入口、但智能快照无法正常捕获的用户。
+- **能做什么：** 捕获前台窗口的辅助功能文本和截图，交给桌面客户端；不提供点击、输入或滚动操作。
+- **如何使用：** 从源码构建，在本机签名、安装并授予辅助功能和屏幕录制权限；目前没有可直接下载的经公证安装包。
+
 ## 项目用途
 
 Intel Appshot 实现一个本地 `x86_64` Helper，接收已观测的 Appshot Apple Event 请求，捕获当前前台窗口的 Accessibility 文本和 PNG 截图，然后按客户端期望的顺序返回快照更新。
@@ -109,6 +113,10 @@ macOS 会要求对本地签名的 Helper 授予：
 ## English
 
 Intel Appshot is an unofficial, community-maintained macOS compatibility project that restores the Appshot capture path used by the ChatGPT/Codex desktop client on Intel (`x86_64`) Macs.
+
+- **Who it is for:** Intel Mac users whose desktop client still exposes Appshot but cannot complete a snapshot capture.
+- **What it does:** Captures Accessibility text and a screenshot of the frontmost window for the desktop client; it does not click, type, or scroll.
+- **How to use it:** Build from source, sign and install the Helper locally, then grant Accessibility and Screen Recording permissions. There is no notarized downloadable installer.
 
 ### Purpose and features
 
